@@ -1,0 +1,5 @@
+# /reset-key  =>  reset-key.php  (clean public URL)
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^reset-key/?$ reset-key.php [L,QSA]
+</IfModule>
