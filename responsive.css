@@ -8,7 +8,7 @@
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
-    font-size: clamp(13.5px, 3.7vw, 16px);
+    font-size: clamp(12.5px, 3.3vw, 15px);
     scroll-behavior: smooth;
 }
 body {
@@ -22,6 +22,13 @@ body {
 img, svg, video, canvas { max-width: 100%; height: auto; }
 svg { height: auto; }
 .fa-solid, .fa-regular, .fa-brands { height: auto; }
+
+@media (min-width: 768px) { html { font-size: 16px; } }
+@media (max-width: 767px) {
+    /* phone e uppercase/mono title gulo ektu compact — boro/baje lage na */
+    .tracking-wider, .tracking-widest { letter-spacing: .03em !important; }
+    h1, h2, h3, h4 { line-height: 1.25; }
+}
 
 /* 2. Text overflow / bhenge jawa atkano */
 h1, h2, h3, h4, h5, label, button, a, span, p, li { overflow-wrap: anywhere; }
@@ -76,8 +83,8 @@ input, select, textarea { max-width: 100%; }
         content: attr(data-label);
         flex: 0 0 auto; max-width: 42%;
         text-align: left;
-        font-size: .68rem; font-weight: 700;
-        letter-spacing: .06em; text-transform: uppercase;
+        font-size: .62rem; font-weight: 700;
+        letter-spacing: .04em; text-transform: uppercase;
         color: #94a3b8; opacity: .9;
     }
     table.rcards td[data-label=""]::before,

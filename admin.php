@@ -1230,6 +1230,14 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
         ::-webkit-scrollbar-thumb { background: #1b2a4e; border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: #00f5ff; }
 
+
+        .dep-filter-btn { background: #080d1a; border-color: #192648; color: #94a3b8; }
+        .dep-filter-btn.active { color: #fff; }
+        .dep-filter-btn[data-dep-filter="all"].active { background: rgba(0,245,255,.15); border-color: rgba(0,245,255,.5); color: #67e8f9; }
+        .dep-filter-btn[data-dep-filter="pending"].active { background: rgba(251,191,36,.15); border-color: rgba(251,191,36,.5); color: #fcd34d; }
+        .dep-filter-btn[data-dep-filter="approved"].active { background: rgba(16,185,129,.15); border-color: rgba(16,185,129,.5); color: #6ee7b7; }
+        .dep-filter-btn[data-dep-filter="rejected"].active { background: rgba(239,68,68,.15); border-color: rgba(239,68,68,.5); color: #fca5a5; }
+
         .pulsing-dot {
             animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
@@ -1271,13 +1279,13 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             </div>
 
             <nav class="space-y-1.5 text-xs font-bold font-mono">
-                <button onclick="switchAdminTab('tab-overview', 'Telemetry Overview')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
-                    <i class="fa-solid fa-gauge-high w-4 text-cyan-400"></i><span>Telemetry Overview</span>
+                <button onclick="switchAdminTab('tab-overview', 'Overview')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
+                    <i class="fa-solid fa-gauge-high w-4 text-cyan-400"></i><span>Overview</span>
                 </button>
-                <button onclick="switchAdminTab('tab-products', 'Products & Catalog Matrix')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
+                <button onclick="switchAdminTab('tab-products', 'Products')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
                     <i class="fa-solid fa-cubes w-4 text-emerald-400"></i><span>Products & Catalog</span>
                 </button>
-                <button onclick="switchAdminTab('tab-resellers', 'Resellers Command Hub')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
+                <button onclick="switchAdminTab('tab-resellers', 'Resellers')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
                     <i class="fa-solid fa-users-gear w-4 text-blue-400"></i><span>Resellers Hub</span>
                 </button>
                 <button onclick="switchAdminTab('tab-admins', 'Authorized Root Admins')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
@@ -1292,7 +1300,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 <button onclick="switchAdminTab('tab-gateways', 'Payment Gateway Pipeline')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
                     <i class="fa-solid fa-money-bill-transfer w-4 text-orange-400"></i><span>SNZ Pay & Gateways</span>
                 </button>
-                <button onclick="switchAdminTab('tab-deposits', 'Deposit Verification Terminal')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
+                <button onclick="switchAdminTab('tab-deposits', 'Deposits')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
                     <i class="fa-solid fa-vault w-4 text-teal-400"></i><span>Deposits Ledger</span>
                 </button>
                 <button onclick="switchAdminTab('tab-logs', 'Security & Login Telemetry')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
@@ -1325,7 +1333,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                     </div>
                     <div class="flex items-center space-x-2 mt-1">
                         <span class="w-2 h-2 rounded-full bg-emerald-400 pulsing-dot"></span>
-                        <span id="headerSectionTitle" class="text-[11px] text-gray-400 font-mono font-medium">Telemetry Overview</span>
+                        <span id="headerSectionTitle" class="text-[11px] text-gray-400 font-mono font-medium">Overview</span>
                     </div>
                 </div>
             </div>
@@ -1361,8 +1369,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <i class="fa-solid fa-bullhorn"></i>
                         </div>
                         <div>
-                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Universal User Broadcast Notice</h3>
-                            <p class="text-xs text-gray-400 font-sans">Broadcast instant notifications directly to all reseller dashboards and clients.</p>
+                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Broadcast Notice</h3>
                         </div>
                     </div>
 
@@ -1405,14 +1412,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <i class="fa-solid fa-chart-line"></i>
                         </div>
                         <div>
-                            <h2 class="text-sm font-extrabold text-white uppercase tracking-wider font-mono">Financial Velocity & Revenue Radar</h2>
-                            <p class="text-xs text-gray-400">Automated gross revenue tracking across Day, Week & Month cycles</p>
+                            <h2 class="text-sm font-extrabold text-white uppercase tracking-wider font-mono">Revenue</h2>
                         </div>
-                    </div>
-                    <div class="flex items-center space-x-2">
-                        <span class="px-3 py-1 rounded-lg bg-[#080d1a] border border-cyber-border text-[11px] font-mono text-cyan-400">
-                            Timezone: Asia/Dhaka
-                        </span>
                     </div>
                 </div>
 
@@ -1423,11 +1424,9 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <span class="uppercase tracking-wider flex items-center gap-1.5 text-cyan-300">
                                 <i class="fa-solid fa-sun text-cyan-400"></i> Today Revenue
                             </span>
-                            <span class="text-[10px] bg-cyan-500/15 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/25">24h Cycle</span>
                         </div>
                         <div class="mt-2">
                             <h3 class="text-2xl sm:text-3xl font-black text-cyan-300">$<?= number_format((float)$salesTodayUSD, 2) ?></h3>
-                            <span class="text-[11px] text-gray-500 block mt-1">Real-time licenses cleared today</span>
                         </div>
                     </div>
 
@@ -1436,11 +1435,9 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <span class="uppercase tracking-wider flex items-center gap-1.5 text-blue-300">
                                 <i class="fa-solid fa-calendar-week text-blue-400"></i> This Week Revenue
                             </span>
-                            <span class="text-[10px] bg-blue-500/15 text-blue-300 px-2 py-0.5 rounded border border-blue-500/25">Current Wk</span>
                         </div>
                         <div class="mt-2">
                             <h3 class="text-2xl sm:text-3xl font-black text-blue-300">$<?= number_format((float)$salesWeekUSD, 2) ?></h3>
-                            <span class="text-[11px] text-gray-500 block mt-1">Cumulative rolling 7-day velocity</span>
                         </div>
                     </div>
 
@@ -1453,7 +1450,6 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         </div>
                         <div class="mt-2">
                             <h3 class="text-2xl sm:text-3xl font-black text-emerald-300">$<?= number_format((float)$salesMonthUSD, 2) ?></h3>
-                            <span class="text-[11px] text-gray-500 block mt-1">Gross monthly settlement total</span>
                         </div>
                     </div>
                 </div>
@@ -1466,19 +1462,13 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         <div class="w-10 h-10 rounded-2xl bg-amber-500/15 text-amber-400 flex items-center justify-center text-base border border-amber-500/30">
                             <i class="fa-solid fa-key"></i>
                         </div>
-                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-widest flex items-center gap-1">
-                            <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i> 1-Tap Audit
-                        </span>
                     </div>
                     <div class="mt-4">
-                        <span class="text-xs text-gray-400 font-semibold block font-sans">Today's Key Dispatch</span>
+                        <span class="text-xs text-gray-400 font-semibold block font-sans">Today's Keys</span>
                         <div class="flex items-baseline space-x-2 mt-1">
                             <h2 class="text-3xl font-black text-amber-400"><?= $todayKeysCount ?></h2>
                             <span class="text-xs text-gray-500 font-bold">Keys Generated</span>
                         </div>
-                        <p class="text-[11px] text-amber-300/80 mt-2 font-sans flex items-center gap-1">
-                            <i class="fa-solid fa-magnifying-glass text-[10px]"></i> Tap to inspect who bought & method
-                        </p>
                     </div>
                 </div>
 
@@ -1487,19 +1477,13 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         <div class="w-10 h-10 rounded-2xl bg-teal-500/15 text-teal-400 flex items-center justify-center text-base border border-teal-500/30">
                             <i class="fa-solid fa-vault"></i>
                         </div>
-                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/40 uppercase tracking-widest flex items-center gap-1">
-                            <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i> 1-Tap Inspect
-                        </span>
                     </div>
                     <div class="mt-4">
-                        <span class="text-xs text-gray-400 font-semibold block font-sans">Today Verified Deposits</span>
+                        <span class="text-xs text-gray-400 font-semibold block font-sans">Today's Deposits</span>
                         <div class="flex items-baseline space-x-2 mt-1">
                             <h2 class="text-3xl font-black text-teal-300">$<?= number_format((float)$todayDepositsUSD, 2) ?></h2>
                             <span class="text-xs text-gray-500 font-bold">(<?= $todayDepositsCount ?> reqs)</span>
                         </div>
-                        <p class="text-[11px] text-teal-300/80 mt-2 font-sans flex items-center gap-1">
-                            <i class="fa-solid fa-magnifying-glass text-[10px]"></i> Tap to inspect sender numbers & TrxIDs
-                        </p>
                     </div>
                 </div>
 
@@ -1508,28 +1492,22 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         <div class="w-10 h-10 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center text-base border border-emerald-500/20">
                             <i class="fa-solid fa-wallet"></i>
                         </div>
-                        <span class="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">RESELLER LIQUIDITY</span>
                     </div>
                     <div class="mt-4">
-                        <span class="text-xs text-gray-400 font-semibold block font-sans">Reseller Vault Balance</span>
+                        <span class="text-xs text-gray-400 font-semibold block font-sans">Balance</span>
                         <h2 class="text-3xl font-black text-emerald-400 mt-1">$<?= number_format((float)$totalFunds, 2) ?></h2>
-                        <span class="text-[11px] text-gray-500 block mt-2 font-sans">Across <?= $totalResellers ?> active accounts</span>
                     </div>
                 </div>
 
-                <div onclick="switchAdminTab('tab-deposits', 'Deposit Verification Terminal')" class="noc-card noc-card-interactive p-5 cursor-pointer border border-rose-500/30">
+                <div onclick="switchAdminTab('tab-deposits', 'Deposits')" class="noc-card noc-card-interactive p-5 cursor-pointer border border-rose-500/30">
                     <div class="flex items-center justify-between">
                         <div class="w-10 h-10 rounded-2xl bg-rose-500/15 text-rose-400 flex items-center justify-center text-base border border-rose-500/20">
                             <i class="fa-solid fa-clock-rotate-left"></i>
                         </div>
-                        <span class="text-[10px] font-mono <?= $pendingTrxCount > 0 ? 'bg-rose-500/20 text-rose-300 pulsing-dot' : 'text-gray-400' ?> px-2 py-0.5 rounded border border-rose-500/20 font-bold">
-                            <?= $pendingTrxCount > 0 ? 'ATTENTION REQUIRED' : 'CLEAR QUEUE' ?>
-                        </span>
                     </div>
                     <div class="mt-4">
-                        <span class="text-xs text-gray-400 font-semibold block font-sans">Pending Verification</span>
+                        <span class="text-xs text-gray-400 font-semibold block font-sans">Pending</span>
                         <h2 class="text-3xl font-black text-rose-400 mt-1"><?= $pendingTrxCount ?></h2>
-                        <span class="text-[11px] text-gray-500 block mt-2 font-sans">Manual transactions awaiting review</span>
                     </div>
                 </div>
             </div>
@@ -1541,8 +1519,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         <i class="fa-solid fa-arrows-rotate"></i>
                     </div>
                     <div>
-                        <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Live Provider Catalog Synchronization</h3>
-                        <p class="text-xs text-gray-400 font-sans">Synchronize catalog packages and validities directly from licensemanager.shop via cryptographic API.</p>
+                        <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Provider Sync</h3>
                     </div>
                 </div>
                 <form method="POST" class="inline">
@@ -1570,10 +1547,9 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                     </div>
                     <div>
                         <h4 class="text-sm font-extrabold text-white flex items-center gap-2 font-mono">
-                            <span>Global Discount Matrix Injection</span>
+                            <span>Global Discount</span>
                             <span class="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">1-Click Apply</span>
                         </h4>
-                        <p class="text-xs text-gray-400 font-sans">Incorporate a system-wide discount % that automatically reflects across every product on reseller client dashboards.</p>
                     </div>
                 </div>
 
@@ -1621,8 +1597,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <i class="fa-solid fa-network-wired"></i>
                         </span>
                         <div>
-                            <h4 class="text-xs font-extrabold text-white font-mono uppercase">Catalog Management Operations</h4>
-                            <span class="text-[10px] text-gray-400 font-mono block">Direct selective sync, provider ingestion or hard database purge</span>
+                            <h4 class="text-xs font-extrabold text-white font-mono uppercase">Catalog</h4>
                         </div>
                     </div>
 
@@ -1754,9 +1729,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 <div class="flex justify-between items-center pb-3 border-b border-cyber-border">
                     <div>
                         <h3 class="text-sm font-bold text-cyan-400 font-mono flex items-center gap-2">
-                            <i class="fa-solid fa-circle-plus"></i> Manual Catalog Provisioning Engine
+                            <i class="fa-solid fa-circle-plus"></i> Add Product
                         </h3>
-                        <p class="text-xs text-gray-400 font-sans mt-0.5">Register a custom product node and attach multiple duration tiers in a unified sequence.</p>
                     </div>
                     <button type="button" onclick="addValidityRow()" class="px-3.5 py-2 rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-xs font-bold font-mono hover:bg-cyan-500/30 flex items-center gap-1.5">
                         <i class="fa-solid fa-plus"></i> + Add Duration Row
@@ -1832,9 +1806,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             <div id="prod-stock" class="hidden noc-card p-6 space-y-6">
                 <div class="pb-3 border-b border-cyber-border">
                     <h3 class="text-sm font-bold text-amber-400 font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-boxes-packing"></i> Physical Stock Key Vault (Inventory Replenishment)
+                        <i class="fa-solid fa-boxes-packing"></i> Stock Keys
                     </h3>
-                    <p class="text-xs text-gray-400 font-sans mt-0.5">Ingest batch offline keys. When orders are processed, system pulls from local physical stock before calling external APIs.</p>
                 </div>
 
                 <form method="POST" class="space-y-4 text-xs font-sans">
@@ -1874,7 +1847,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 <!-- Stock Inventory Summary Table -->
                 <div class="pt-4 border-t border-cyber-border space-y-3">
                     <h4 class="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-warehouse text-cyan-400"></i> Active Vault Stock Levels
+                        <i class="fa-solid fa-warehouse text-cyan-400"></i> Stock Levels
                     </h4>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-xs font-mono">
@@ -1926,7 +1899,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 <div class="pt-4 border-t border-cyber-border space-y-3">
                     <div class="flex items-center justify-between">
                         <h4 class="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
-                            <i class="fa-solid fa-clock-rotate-left text-amber-400"></i> Stock Ledger & Delivery Trace
+                            <i class="fa-solid fa-clock-rotate-left text-amber-400"></i> Stock Ledger
                         </h4>
                         <span class="text-[10px] font-mono text-gray-400">Audit Depth: <?= count($stockLogs) ?></span>
                     </div>
@@ -2104,9 +2077,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             <div id="reseller-add-sec" class="hidden noc-card p-6 space-y-4">
                 <div class="pb-3 border-b border-cyber-border">
                     <h3 class="text-sm font-bold text-cyan-400 font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-user-plus"></i> Provision Reseller Account
+                        <i class="fa-solid fa-user-plus"></i> New Reseller
                     </h3>
-                    <p class="text-xs text-gray-400 font-sans mt-0.5">Provision credentials, set initial liquidity pool, and generate cryptographic API keys.</p>
                 </div>
 
                 <form method="POST" class="space-y-4 text-xs font-sans">
@@ -2145,9 +2117,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             <div id="reseller-bonus-sec" class="hidden noc-card p-6 space-y-6">
                 <div class="pb-3 border-b border-cyber-border">
                     <h3 class="text-sm font-bold text-amber-400 font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-gift"></i> Deposit Incentive Slabs & Threshold Matrix
+                        <i class="fa-solid fa-gift"></i> Deposit Bonus
                     </h3>
-                    <p class="text-xs text-gray-400 font-sans mt-0.5">Automated incentive triggers: When a reseller deposits $5 (500৳), system awards $0.50 (50৳) bonus; for $10 (1000৳) deposit, system awards $1.50 (150৳) bonus.</p>
                 </div>
 
                 <!-- Add Bonus Slab Form -->
@@ -2181,7 +2152,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 <!-- Active Bonus Slabs Table -->
                 <div class="space-y-3">
                     <h4 class="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-table-list text-cyan-400"></i> Active Threshold Matrix
+                        <i class="fa-solid fa-table-list text-cyan-400"></i> Bonus Slabs
                     </h4>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-xs font-mono">
@@ -2237,9 +2208,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
         <section id="tab-admins" class="tab-section hidden space-y-5">
             <div class="noc-card p-6 space-y-3.5">
                 <h3 class="text-sm font-bold text-amber-400 font-mono flex items-center gap-2">
-                    <i class="fa-solid fa-shield-halved"></i> Authorize Admin Privileges (Telegram UID)
+                    <i class="fa-solid fa-shield-halved"></i> Add Admin
                 </h3>
-                <p class="text-xs text-gray-400 font-sans">Delegated Telegram UIDs gain administrative rights across bot commands and web console authentication.</p>
                 <form method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
                     <input type="hidden" name="admin_action" value="add_admin_uid">
                     <input type="hidden" name="active_tab" value="tab-admins">
@@ -2253,7 +2223,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
 
             <div class="noc-card p-6 space-y-3">
                 <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
-                    <i class="fa-solid fa-crown text-amber-400"></i> Active Administrative Roster
+                    <i class="fa-solid fa-crown text-amber-400"></i> Admins
                 </h3>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left text-xs font-mono">
@@ -2308,8 +2278,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <i class="fa-solid fa-satellite-dish"></i>
                         </div>
                         <div>
-                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Real-Time License Sales Stream</h3>
-                            <p class="text-xs text-gray-400 font-sans">Audit feed of all license generations and cryptographic key dispatches</p>
+                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Sales Feed</h3>
                         </div>
                     </div>
                     <span class="text-xs text-cyan-400 font-mono">Delivered Total: <strong class="text-white"><?= $totalLicenses ?></strong></span>
@@ -2363,8 +2332,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <i class="fa-solid fa-arrows-spin"></i>
                         </div>
                         <div>
-                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">HWID Reset & Hardware Unbind Audit</h3>
-                            <p class="text-xs text-gray-400 font-sans">Log of device hardware identifier resets initiated by resellers or automated routines</p>
+                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Key Resets</h3>
                         </div>
                     </div>
                     <span class="text-xs text-purple-400 font-mono">Logged Resets: <strong class="text-white"><?= count($resets) ?></strong></span>
@@ -2417,9 +2385,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             <div id="gateways-settings-sec" class="noc-card p-6 space-y-5">
                 <div>
                     <h3 class="text-sm font-bold text-emerald-400 font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-network-wired"></i> SNZ Pay Autonomous Payment Engine & Gateway Configuration
+                        <i class="fa-solid fa-network-wired"></i> SNZ Pay
                     </h3>
-                    <p class="text-xs text-gray-400 font-sans mt-0.5">Firebase has been retired. Configure your official SNZ Pay Brand License Key and payment numbers.</p>
                 </div>
 
                 <form method="POST" class="space-y-4 text-xs font-sans">
@@ -2490,9 +2457,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                     <div class="flex items-center justify-between pb-3 border-b border-cyber-border">
                         <div>
                             <h4 class="text-sm font-bold text-white font-mono flex items-center gap-2">
-                                <i class="fa-solid fa-earth-americas text-cyan-400"></i> Global Liquidity Ingestion Guard
+                                <i class="fa-solid fa-earth-americas text-cyan-400"></i> Deposit Limits
                             </h4>
-                            <p class="text-xs text-gray-400 font-sans mt-0.5">Enforces minimum and maximum allowable deposit constraints across all accounts</p>
                         </div>
                         <span class="text-xs font-mono text-emerald-400 font-bold">Min: $<?= number_format((float)($settings['min_deposit_limit'] ?? 5), 2) ?> • Max: $<?= number_format((float)($settings['max_deposit_limit'] ?? 500), 2) ?></span>
                     </div>
@@ -2520,9 +2486,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 <div class="noc-card p-6 space-y-3.5">
                     <div class="pb-3 border-b border-cyber-border">
                         <h4 class="text-sm font-bold text-amber-400 font-mono flex items-center gap-2">
-                            <i class="fa-solid fa-user-lock"></i> Assign Custom Account Constraints (Target / Universal)
+                            <i class="fa-solid fa-user-lock"></i> Custom Limits
                         </h4>
-                        <p class="text-xs text-gray-400 font-sans mt-0.5">Override global minimum and maximum thresholds for a single user or apply universally.</p>
                     </div>
 
                     <form method="POST" class="grid grid-cols-1 sm:grid-cols-4 gap-3.5 text-xs font-sans">
@@ -2556,7 +2521,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
 
                 <div class="noc-card p-6 space-y-3">
                     <h4 class="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-list-check text-cyan-400"></i> Resellers with Active Custom Thresholds
+                        <i class="fa-solid fa-list-check text-cyan-400"></i> Custom Limit Users
                     </h4>
 
                     <div class="overflow-x-auto">
@@ -2608,11 +2573,19 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <i class="fa-solid fa-vault"></i>
                         </div>
                         <div>
-                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Deposit Verification & Clearing Terminal</h3>
-                            <p class="text-xs text-gray-400 font-sans">Approve or reject manual liquidity deposits; approved deposits auto-apply qualifying bonus tiers.</p>
+                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Deposits</h3>
                         </div>
                     </div>
-                    <span class="text-xs font-mono text-amber-400">Queue: <strong><?= $pendingTrxCount ?> Pending</strong></span>
+                                    </div>
+                <?php
+                $depCounts = ['all' => count($transactions), 'pending' => 0, 'approved' => 0, 'rejected' => 0];
+                foreach ($transactions as $__t) { if (isset($depCounts[$__t['status']])) $depCounts[$__t['status']]++; }
+                ?>
+                <div class="grid grid-cols-4 gap-2" id="depFilterBar">
+                    <button type="button" data-dep-filter="all" onclick="filterDeposits('all')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">All <span class="opacity-70">(<?= $depCounts['all'] ?>)</span></button>
+                    <button type="button" data-dep-filter="pending" onclick="filterDeposits('pending')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">Pending <span class="opacity-70">(<?= $depCounts['pending'] ?>)</span></button>
+                    <button type="button" data-dep-filter="approved" onclick="filterDeposits('approved')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">Approved <span class="opacity-70">(<?= $depCounts['approved'] ?>)</span></button>
+                    <button type="button" data-dep-filter="rejected" onclick="filterDeposits('rejected')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">Rejected <span class="opacity-70">(<?= $depCounts['rejected'] ?>)</span></button>
                 </div>
 
                 <div class="overflow-x-auto">
@@ -2630,10 +2603,10 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         </thead>
                         <tbody class="divide-y divide-cyber-border text-[11px]">
                             <?php if (empty($transactions)): ?>
-                                <tr><td colspan="7" class="py-6 text-center text-gray-500 italic">No deposit transactions logged in history.</td></tr>
+                                <tr><td colspan="7" class="py-6 text-center text-gray-500 italic">No deposits.</td></tr>
                             <?php else: ?>
                                 <?php foreach($transactions as $t): ?>
-                                    <tr class="hover:bg-[#0c1326]">
+                                    <tr class="hover:bg-[#0c1326] dep-row" data-status="<?= htmlspecialchars($t['status']) ?>">
                                         <td class="py-2.5 font-bold text-white font-sans"><?= htmlspecialchars($t['username']) ?></td>
                                         <td class="py-2.5 text-cyan-400 font-bold"><?= $t['method'] ?></td>
                                         <td class="py-2.5 font-black text-emerald-400 text-xs">$<?= number_format((float)$t['amount'], 2) ?></td>
@@ -2682,7 +2655,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             <div id="logs-activity-sec" class="noc-card p-6 space-y-4">
                 <div class="flex justify-between items-center pb-3 border-b border-cyber-border">
                     <h3 class="text-sm font-bold text-cyan-400 font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-tower-broadcast"></i> Live Security, API Usage & Audit Trail
+                        <i class="fa-solid fa-tower-broadcast"></i> Audit Logs
                     </h3>
                     <span class="text-xs text-gray-400 font-mono">Recent Records: <?= count($logs) ?></span>
                 </div>
@@ -2723,8 +2696,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <i class="fa-solid fa-satellite"></i>
                         </span>
                         <div>
-                            <h4 class="text-xs font-bold text-white font-mono uppercase">Login Intelligence & Geo Network Radar</h4>
-                            <p class="text-[11px] text-gray-400 font-sans">Tracks user locality (Dhaka, Chittagong, etc.), mobile operator network (GP/Robi/BL/WiFi) and Telegram credentials.</p>
+                            <h4 class="text-xs font-bold text-white font-mono uppercase">Logins</h4>
                         </div>
                     </div>
                     <span class="text-xs font-mono text-emerald-400 font-bold"><?= count($loginLogs) ?> Sign-Ins</span>
@@ -2801,8 +2773,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         <i class="fa-solid fa-key"></i>
                     </div>
                     <div>
-                        <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Today's Key Dispatch Audit Trail</h3>
-                        <p class="text-xs text-gray-400 font-sans mt-0.5">Real-time breakdown of license keys generated today with buyer identity & acquisition channel.</p>
+                        <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Today's Keys</h3>
                     </div>
                 </div>
                 <button type="button" onclick="closeModal('todayKeysModal')" class="text-gray-400 hover:text-white p-1 rounded-lg">
@@ -2836,8 +2807,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                         <i class="fa-solid fa-vault"></i>
                     </div>
                     <div>
-                        <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Today's Verified Liquidity Ingestion</h3>
-                        <p class="text-xs text-gray-400 font-sans mt-0.5">Audit breakdown of all wallet deposits verified and cleared during today's cycle.</p>
+                        <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Today's Deposits</h3>
                     </div>
                 </div>
                 <button type="button" onclick="closeModal('todayDepositsModal')" class="text-gray-400 hover:text-white p-1 rounded-lg">
@@ -2981,9 +2951,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             <div class="flex justify-between items-center pb-2 border-b border-cyber-border">
                 <div>
                     <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
-                        <i class="fa-solid fa-list-check text-emerald-400"></i> Selective Ingestion from Provider
+                        <i class="fa-solid fa-list-check text-emerald-400"></i> Import Products
                     </h3>
-                    <p class="text-xs text-gray-400 font-sans mt-0.5">Select specific catalog packages to ingest into your local database.</p>
                 </div>
                 <button onclick="closeModal('selectProviderProdModal')" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-base"></i></button>
             </div>
@@ -3172,7 +3141,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
         <div class="noc-card p-6 w-full max-w-sm space-y-4 border border-cyan-500/40">
             <div class="flex justify-between items-center pb-2 border-b border-cyber-border">
                 <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
-                    <i class="fa-solid fa-pen-to-square text-cyan-400"></i> Modify Product Node
+                    <i class="fa-solid fa-pen-to-square text-cyan-400"></i> Edit Product
                 </h3>
                 <button onclick="closeModal('editProdModal')" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
@@ -3267,7 +3236,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
         <div class="noc-card p-6 w-full max-w-md space-y-4 border border-cyan-500/40">
             <div class="flex justify-between items-center pb-2 border-b border-cyber-border">
                 <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
-                    <i class="fa-solid fa-pen-ruler text-cyan-400"></i> Modify Validity Specification
+                    <i class="fa-solid fa-pen-ruler text-cyan-400"></i> Edit Plan
                 </h3>
                 <button onclick="closeModal('editPlanModal')" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
@@ -3326,6 +3295,21 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
             drawer.classList.toggle('translate-x-full');
             overlay.classList.toggle('hidden');
         }
+
+        function filterDeposits(status) {
+            document.querySelectorAll('#tab-deposits .dep-row').forEach(tr => {
+                tr.style.display = (status === 'all' || tr.dataset.status === status) ? '' : 'none';
+            });
+            document.querySelectorAll('.dep-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.depFilter === status));
+            try { sessionStorage.setItem('admin_dep_filter', status); } catch (e) {}
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            let f = 'all';
+            try { f = sessionStorage.getItem('admin_dep_filter') || 'all'; } catch (e) {}
+            // pending thakle seta age dekhao
+            if (f === 'all' && document.querySelector('#tab-deposits .dep-row[data-status="pending"]')) f = 'pending';
+            filterDeposits(f);
+        });
 
         function switchAdminTab(sectionId, titleName = '') {
             const drawer = document.getElementById('adminDrawer');
@@ -4123,7 +4107,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
 
         window.addEventListener('DOMContentLoaded', () => {
             const initialTab = '<?= $activeTab ?>' !== 'tab-overview' ? '<?= $activeTab ?>' : (sessionStorage.getItem('admin_active_tab') || 'tab-overview');
-            const initialTitle = sessionStorage.getItem('admin_active_title') || 'Telemetry Overview';
+            const initialTitle = sessionStorage.getItem('admin_active_title') || 'Overview';
             
             document.querySelectorAll('.tab-section').forEach(sec => sec.classList.add('hidden'));
             const targetSection = document.getElementById(initialTab);
