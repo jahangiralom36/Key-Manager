@@ -802,6 +802,8 @@ $userAllResetKeys = lm_enrich_licenses_reset($pdo, $stmtAllKeys->fetchAll(PDO::F
     <!-- Google Fonts with native Bangla font 'Hind Siliguri' support -->
     <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     
+    <link rel="stylesheet" href="responsive.css?v=<?= @filemtime(__DIR__ . '/responsive.css') ?: 1 ?>">
+    <script defer src="responsive.js?v=<?= @filemtime(__DIR__ . '/responsive.js') ?: 1 ?>"></script>
     <style>
         *, *::before, *::after {
             -webkit-user-select: none !important;

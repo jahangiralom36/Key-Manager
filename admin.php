@@ -1190,6 +1190,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
         }
     </script>
 
+    <link rel="stylesheet" href="responsive.css?v=<?= @filemtime(__DIR__ . '/responsive.css') ?: 1 ?>">
+    <script defer src="responsive.js?v=<?= @filemtime(__DIR__ . '/responsive.js') ?: 1 ?>"></script>
     <style>
         body { 
             background-color: #040711; 

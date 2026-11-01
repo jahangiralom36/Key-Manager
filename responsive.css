@@ -1,0 +1,102 @@
+/* ====================================================================
+   RESPONSIVE.CSS — sob phone e ekoi rokom, professional mobile layout
+   (admin.php + dashboard.php duto-te load hoy)
+   ==================================================================== */
+
+/* 1. Sob phone e ekoi proportion: root font width onujayi smoothly scale kore.
+      (Tailwind rem use kore, tai pura UI ekshathe scale hoy — kono phone e boro/choto lage na) */
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    font-size: clamp(13.5px, 3.7vw, 16px);
+    scroll-behavior: smooth;
+}
+body {
+    overflow-x: hidden;
+    overflow-wrap: break-word;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    padding-bottom: env(safe-area-inset-bottom);
+}
+img, svg, video, canvas { max-width: 100%; height: auto; }
+svg { height: auto; }
+.fa-solid, .fa-regular, .fa-brands { height: auto; }
+
+/* 2. Text overflow / bhenge jawa atkano */
+h1, h2, h3, h4, h5, label, button, a, span, p, li { overflow-wrap: anywhere; }
+button, .btn { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+code, .break-all, .font-mono.break-all { overflow-wrap: anywhere; word-break: break-word; }
+p code, li code, div > code { white-space: normal; }
+pre { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+pre code { white-space: pre; overflow-wrap: normal; word-break: normal; }
+input, select, textarea { max-width: 100%; }
+.overflow-x-auto { -webkit-overflow-scrolling: touch; max-width: 100%; }
+
+/* 3. Modal / popup choto screen e kete jabe na */
+.fixed.inset-0 > div:not(.h-full) {
+    max-height: 92vh;
+    max-height: 92dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* 4. Phone e table => sundor card list (Tailwind sm breakpoint er niche) */
+@media (max-width: 639px) {
+    table.rcards,
+    table.rcards tbody,
+    table.rcards tr,
+    table.rcards td { display: block; width: 100%; box-sizing: border-box; }
+    table.rcards { border-collapse: separate; border-spacing: 0; min-width: 0 !important; }
+    table.rcards thead {
+        position: absolute; width: 1px; height: 1px; overflow: hidden;
+        clip: rect(0 0 0 0); white-space: nowrap;
+    }
+    table.rcards tbody tr {
+        box-sizing: border-box;
+        background: rgba(148, 163, 184, 0.05);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 14px;
+        margin: 0 0 .7rem 0;
+        padding: .35rem .85rem;
+        box-shadow: 0 6px 18px -10px rgba(0, 0, 0, .6);
+    }
+    table.rcards tbody tr:hover { background: rgba(148, 163, 184, 0.08); }
+    table.rcards td {
+        display: flex; align-items: center; justify-content: space-between;
+        flex-wrap: wrap; gap: .35rem .75rem;
+        text-align: right !important;
+        padding: .55rem 0 !important;
+        border: 0 !important;
+        border-bottom: 1px dashed rgba(148, 163, 184, 0.16) !important;
+        min-width: 0 !important; width: 100% !important;
+    }
+    table.rcards td:last-child { border-bottom: 0 !important; }
+    table.rcards td::before {
+        content: attr(data-label);
+        flex: 0 0 auto; max-width: 42%;
+        text-align: left;
+        font-size: .68rem; font-weight: 700;
+        letter-spacing: .06em; text-transform: uppercase;
+        color: #94a3b8; opacity: .9;
+    }
+    table.rcards td[data-label=""]::before,
+    table.rcards td.rc-span::before { display: none; }
+    table.rcards td[data-label=""],
+    table.rcards td.rc-span { justify-content: center; text-align: center !important; }
+    table.rcards td.hidden { display: none !important; }
+    table.rcards td form, table.rcards td > div { max-width: 100%; }
+    table.rcards td button, table.rcards td a.btn { min-height: 34px; }
+    table.rcards tr.hidden { display: none !important; }
+}
+
+/* 5. Ekdom choto phone (<=360px) */
+@media (max-width: 360px) {
+    table.rcards tbody tr { padding: .25rem .65rem; }
+    table.rcards td::before { max-width: 38%; }
+}
+
+/* 6. Scrollbar / tap polish */
+@media (hover: none) {
+    ::-webkit-scrollbar { width: 3px; height: 3px; }
+}
