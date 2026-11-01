@@ -11,6 +11,9 @@ error_reporting(E_ALL);
 
 require_once __DIR__ . '/config.php';
 
+// Dhaka time (UTC+6) — 'today/week/month' ekdom thik dhaka dine hisab hobe
+try { $pdo->exec("SET time_zone = '+06:00'"); } catch (Throwable $e) {}
+
 // NOTE: Table/column migration ekhane nei — sob database.sql e ache.
 
 // --- UTILITY & AUTH HELPER FUNCTIONS ---
@@ -248,7 +251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
             SELECT t.*, u.username, u.telegram_username 
             FROM transactions t 
             JOIN users u ON t.user_id = u.id 
-            WHERE DATE(t.created_at) = CURDATE() 
+            WHERE t.status = 'approved' AND DATE(t.created_at) = CURDATE() 
             ORDER BY t.id DESC
         ");
         $stmt->execute();
@@ -1081,35 +1084,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_action'])) {
 }
 
 // --- ADVANCED TELEMETRY METRICS & FINANCIAL ENGINE ---
+
 $totalResellers = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn() ?: 0;
 $totalLicenses = $pdo->query("SELECT COUNT(*) FROM licenses")->fetchColumn() ?: 0;
 $totalFunds = $pdo->query("SELECT SUM(balance) FROM users")->fetchColumn() ?: 0.00;
 $pendingTrxCount = $pdo->query("SELECT COUNT(*) FROM transactions WHERE status = 'pending'")->fetchColumn() ?: 0;
 
 $salesTodayUSD = $pdo->query("
-    SELECT COALESCE(SUM(CASE WHEN l.price > 0 THEN l.price ELSE COALESCE(p.reseller_price, 5.00) END), 0.00)
+    SELECT COALESCE(SUM(CASE WHEN l.price > 0 THEN l.price ELSE COALESCE(p.reseller_price, 0) END), 0.00)
     FROM licenses l
-    LEFT JOIN product_plans p ON l.validity = p.plan_title
+    LEFT JOIN product_plans p ON l.plan_id = p.id
     WHERE DATE(l.created_at) = CURDATE()
 ")->fetchColumn() ?: 0.00;
 
 $salesWeekUSD = $pdo->query("
-    SELECT COALESCE(SUM(CASE WHEN l.price > 0 THEN l.price ELSE COALESCE(p.reseller_price, 5.00) END), 0.00)
+    SELECT COALESCE(SUM(CASE WHEN l.price > 0 THEN l.price ELSE COALESCE(p.reseller_price, 0) END), 0.00)
     FROM licenses l
-    LEFT JOIN product_plans p ON l.validity = p.plan_title
+    LEFT JOIN product_plans p ON l.plan_id = p.id
     WHERE YEARWEEK(l.created_at, 1) = YEARWEEK(CURDATE(), 1)
 ")->fetchColumn() ?: 0.00;
 
 $salesMonthUSD = $pdo->query("
-    SELECT COALESCE(SUM(CASE WHEN l.price > 0 THEN l.price ELSE COALESCE(p.reseller_price, 5.00) END), 0.00)
+    SELECT COALESCE(SUM(CASE WHEN l.price > 0 THEN l.price ELSE COALESCE(p.reseller_price, 0) END), 0.00)
     FROM licenses l
-    LEFT JOIN product_plans p ON l.validity = p.plan_title
+    LEFT JOIN product_plans p ON l.plan_id = p.id
     WHERE MONTH(l.created_at) = MONTH(CURDATE()) AND YEAR(l.created_at) = YEAR(CURDATE())
 ")->fetchColumn() ?: 0.00;
 
 $todayKeysCount = $pdo->query("SELECT COUNT(*) FROM licenses WHERE DATE(created_at) = CURDATE()")->fetchColumn() ?: 0;
 $todayDepositsUSD = $pdo->query("SELECT COALESCE(SUM(amount), 0.00) FROM transactions WHERE status = 'approved' AND DATE(created_at) = CURDATE()")->fetchColumn() ?: 0.00;
-$todayDepositsCount = $pdo->query("SELECT COUNT(*) FROM transactions WHERE DATE(created_at) = CURDATE()")->fetchColumn() ?: 0;
+$todayDepositsCount = $pdo->query("SELECT COUNT(*) FROM transactions WHERE status = 'approved' AND DATE(created_at) = CURDATE()")->fetchColumn() ?: 0;
 
 // Resellers Array with Sub-Accounts counter
 $resellers = $pdo->query("
@@ -1346,8 +1350,8 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                     <strong class="text-emerald-400 font-bold"><?= $providerBalance ?></strong>
                 </div>
 
-                <button type="button" onclick="toggleAdminDrawer()" class="w-10 h-10 flex items-center justify-center bg-[#0c1326] border border-cyan-500/30 hover:border-cyan-400 text-cyan-400 rounded-xl active:scale-95 transition shadow-lg shadow-cyan-950/40">
-                    <i class="fa-solid fa-bars-staggered text-base"></i>
+                <button type="button" onclick="toggleAdminDrawer()" class="h-10 px-3 gap-2 flex items-center justify-center bg-[#0c1326] border border-cyan-500/30 hover:border-cyan-400 text-cyan-400 rounded-xl active:scale-95 transition shadow-lg shadow-cyan-950/40">
+                    <i class="fa-solid fa-bars text-base"></i><span class="text-[11px] font-bold font-mono uppercase">Menu</span>
                 </button>
             </div>
         </div>

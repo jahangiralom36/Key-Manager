@@ -355,9 +355,9 @@ if (isset($_POST['ajax_action']) && $_POST['ajax_action'] === 'live_generate') {
             }
         }
 
-        $stmtInsert = $pdo->prepare("INSERT INTO licenses (user_id, product_id, plan_id, reset_api_id, license_key, validity, source) VALUES (?, ?, ?, ?, ?, ?, 'PANEL')");
+        $stmtInsert = $pdo->prepare("INSERT INTO licenses (user_id, product_id, plan_id, reset_api_id, license_key, validity, price, source) VALUES (?, ?, ?, ?, ?, ?, ?, 'PANEL')");
         foreach ($generatedKeys as $key) {
-            $stmtInsert->execute([$user['id'], (int)$plan['real_product_id'], $planId, $resolvedResetApiId, (string)$key, $productFullName]);
+            $stmtInsert->execute([$user['id'], (int)$plan['real_product_id'], $planId, $resolvedResetApiId, (string)$key, $productFullName, $unitPrice]);
         }
 
         $pdo->commit();
@@ -691,6 +691,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             exit;
         }
 
+        // Same TrxID ek shathe 2 bar submit hole double credit atkate (connection shesh hole lock nijei chhute jay)
+        $pdo->prepare("SELECT GET_LOCK(?, 15)")->execute(['trx_' . md5($trxId)]);
+
         $stmtChkTrx = $pdo->prepare("SELECT id, status FROM transactions WHERE UPPER(trx_id) = ? LIMIT 1");
         $stmtChkTrx->execute([$trxId]);
         $existingTrx = $stmtChkTrx->fetch();
@@ -706,32 +709,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $snzApiUrl = trim($settings['snzpay_api_url'] ?? 'https://snzpay.digital/api/verify_payment.php');
 
         if ($autoPaymentOn && !empty($snzLicenseKey)) {
-            $snzMethod = strtoupper($method);
+            $snz = snz_verify_payment($snzApiUrl, $snzLicenseKey, $trxId, (string)$method, $rawAmount);
 
-            $payload = [
-                "license_key" => $snzLicenseKey,
-                "trx_id"      => $trxId,
-                "method"      => $snzMethod,
-                "amount"      => $rawAmount
-            ];
-
-            $ch = curl_init($snzApiUrl);
-            curl_setopt_array($ch, [
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => json_encode($payload),
-                CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Accept: application/json'],
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT        => 20,
-                CURLOPT_SSL_VERIFYPEER => false
-            ]);
-            $snzRes = curl_exec($ch);
-            curl_close($ch);
-
-            $result = json_decode($snzRes ?: '', true);
-
-            if ($result && isset($result['status']) && $result['status'] === 'success') {
-                $verifiedBDT = (float)($result['data']['amount'] ?? $rawAmount);
-                $creditedUSD = round($verifiedBDT / $effectiveBdtRate, 2);
+            if ($snz['ok']) {
+                // Binance e amount USD (USDT), baki gateway BDT => USD convert
+                $creditedUSD = ($method === 'Binance')
+                    ? round($snz['amount'], 2)
+                    : round($snz['amount'] / $effectiveBdtRate, 2);
 
                 $stmt = $pdo->prepare("INSERT INTO transactions (user_id, method, amount, sender_num, trx_id, status) VALUES (?, ?, ?, ?, ?, 'approved')");
                 $stmt->execute([$user['id'], $method, $creditedUSD, $sender, strtoupper($trxId)]);
@@ -742,8 +726,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 header('Location: dashboard.php');
                 exit;
             } else {
-                $errMsg = $result['message'] ?? 'SNZ Pay Verification Failed! Invalid TrxID or Amount.';
-                $_SESSION['flash_toast'] = ['type' => 'error', 'msg' => $errMsg];
+                $_SESSION['flash_toast'] = ['type' => 'error', 'msg' => $snz['message']];
                 header('Location: dashboard.php');
                 exit;
             }

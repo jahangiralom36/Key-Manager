@@ -146,4 +146,49 @@ function lm_get_provider_balance(): string {
     return '$0.00';
 }
 
+
+// SNZ Pay (snzpay.digital) payment verification — POST JSON
+// methods: BKASH, NAGAD, ROCKET, BINANCE, BANGLA_QR   |  success => status=success, data.amount
+function snz_verify_payment(string $apiUrl, string $licenseKey, string $trxId, string $method, float $amount): array {
+    $allowed = ['BKASH', 'NAGAD', 'ROCKET', 'BINANCE', 'BANGLA_QR'];
+    $m = strtoupper(str_replace([' ', '-'], '_', trim($method)));
+    if (!in_array($m, $allowed, true)) {
+        return ['ok' => false, 'amount' => 0.0, 'message' => 'Unsupported payment method for SNZ Pay.'];
+    }
+    if ($apiUrl === '') $apiUrl = 'https://snzpay.digital/api/verify_payment.php';
+
+    $payload = [
+        'license_key' => $licenseKey,
+        'trx_id'      => strtoupper(trim($trxId)),
+        'method'      => $m,
+        'amount'      => $amount
+    ];
+    $ch = curl_init($apiUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_SSL_VERIFYPEER => false
+    ]);
+    $res     = curl_exec($ch);
+    $http    = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlErr) {
+        return ['ok' => false, 'amount' => 0.0, 'message' => 'SNZ Pay connection error. Please try again.'];
+    }
+    $result = json_decode($res ?: '', true);
+    if (!is_array($result)) {
+        return ['ok' => false, 'amount' => 0.0, 'message' => 'Invalid response from SNZ Pay (HTTP ' . $http . ').'];
+    }
+    if (($result['status'] ?? '') === 'success') {
+        $verified = isset($result['data']['amount']) && is_numeric($result['data']['amount']) ? (float)$result['data']['amount'] : $amount;
+        return ['ok' => true, 'amount' => $verified, 'message' => (string)($result['message'] ?? 'Payment Verified')];
+    }
+    return ['ok' => false, 'amount' => 0.0, 'message' => (string)($result['message'] ?? 'SNZ Pay Verification Failed! Invalid TrxID or Amount.')];
+}
+
 require_once __DIR__ . '/reset_engine.php';
