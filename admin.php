@@ -394,6 +394,7 @@ $settings = [
     'rocket_number'       => '01900000000',
     'binance_id'          => '12345678',
     'snzpay_license_key'  => '',
+    'snzpay_client_name'  => '',
     'snzpay_api_url'      => 'https://snzpay.digital/api/verify_payment.php',
     'auto_payment_on'     => '0',
     'min_deposit_limit'   => '5.00',
@@ -921,7 +922,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_action'])) {
 
     // 20. GATEWAYS & SNZ PAY AUTOPAYMENT PIPELINE
     if ($act === 'update_gateways') {
-        $keys = ['usdt_rate', 'bkash_number', 'nagad_number', 'rocket_number', 'binance_id', 'snzpay_license_key', 'snzpay_api_url', 'auto_payment_on'];
+        $keys = ['usdt_rate', 'bkash_number', 'nagad_number', 'rocket_number', 'binance_id', 'snzpay_license_key', 'snzpay_client_name', 'snzpay_api_url', 'auto_payment_on'];
         $stmt = $pdo->prepare("INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?");
         foreach ($keys as $k) {
             $val = trim($_POST[$k] ?? '0');
@@ -2413,6 +2414,10 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                             <div>
                                 <label class="text-gray-300 block mb-1 font-bold font-mono">SNZ Pay Active License Key (Brand Key)</label>
                                 <input type="text" name="snzpay_license_key" value="<?= htmlspecialchars($settings['snzpay_license_key'] ?? '') ?>" placeholder="e.g. SNZ_LIVE_KEY_XXXXX" class="w-full bg-[#040711] border border-cyber-border p-3 rounded-xl text-amber-300 font-mono text-xs outline-none focus:border-amber-400 font-bold">
+                            </div>
+                            <div>
+                                <label class="text-gray-300 block mb-1 font-bold font-mono">Client Name (site domain / bot name)</label>
+                                <input type="text" name="snzpay_client_name" value="<?= htmlspecialchars($settings['snzpay_client_name'] ?? '') ?>" placeholder="<?= htmlspecialchars((string)parse_url(SITE_URL, PHP_URL_HOST)) ?>" class="w-full bg-[#040711] border border-cyber-border p-3 rounded-xl text-white font-mono outline-none focus:border-amber-400">
                             </div>
                             <div>
                                 <label class="text-gray-300 block mb-1 font-bold font-mono">SNZ Pay Endpoint URL</label>

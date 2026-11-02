@@ -709,7 +709,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $snzApiUrl = trim($settings['snzpay_api_url'] ?? 'https://snzpay.digital/api/verify_payment.php');
 
         if ($autoPaymentOn && !empty($snzLicenseKey)) {
-            $snz = snz_verify_payment($snzApiUrl, $snzLicenseKey, $trxId, (string)$method, $rawAmount);
+            $snz = snz_verify_payment($snzApiUrl, $snzLicenseKey, $trxId, (string)$method, $rawAmount, ($__cn = trim((string)($settings['snzpay_client_name'] ?? ''))) === '0' ? '' : $__cn);
 
             if ($snz['ok']) {
                 // Binance e amount USD (USDT), baki gateway BDT => USD convert

@@ -23,6 +23,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 require_once __DIR__ . '/config.php';
 
+// JSON body (Content-Type: application/json) ke o $_REQUEST er moto nao — customer er site JSON pathale-o kaj korbe
+$__raw = file_get_contents('php://input');
+if ($__raw !== false && $__raw !== '' && stripos((string)($_SERVER['CONTENT_TYPE'] ?? ''), 'json') !== false) {
+    $__json = json_decode($__raw, true);
+    if (is_array($__json)) {
+        foreach ($__json as $__k => $__v) {
+            if (is_scalar($__v)) $_REQUEST[$__k] = $__v;
+        }
+    }
+}
+
 // Helper function for clean JSON output
 function apiOutput(array $data, int $httpCode = 200): void {
     if (ob_get_length()) {
@@ -117,7 +128,8 @@ try {
     ], 500);
 }
 
-$action = strtolower(trim($_REQUEST['action'] ?? 'balance'));
+$action = strtolower(trim((string)($_REQUEST['action'] ?? 'balance')));
+if (in_array($action, ['reset', 'resetkey', 'reset_hwid', 'hwid_reset'], true)) $action = 'reset_key';
 
 // ==========================================================
 // 3. ACTION: BALANCE
@@ -339,6 +351,7 @@ if ($action === 'generate_key') {
             'product'           => $plan['product_name'],
             'product_name'      => $productFullName,
             'validity'          => $plan['plan_title'],
+            'reset_api_id'      => lm_resolve_reset_api_id($plan['plan_reset_api_id'], $plan['prod_reset_api_id'], (string)$plan['product_name'], 0, (string)$plan['plan_title']),
             'quantity'          => count($keys),
             'amount_charged'    => $totalCost,
             'remaining_balance' => number_format($currentBal - $totalCost, 2, '.', '')
@@ -381,7 +394,7 @@ if ($action === 'key_history' || $action === 'history') {
 //    api_id dewa optional: na dile key er product theke auto-detect hobe.
 // ==========================================================
 if ($action === 'reset_key') {
-    $key = trim((string)($_REQUEST['key'] ?? ($_REQUEST['license_key'] ?? '')));
+    $key = trim((string)($_REQUEST['key'] ?? ($_REQUEST['license_key'] ?? ($_REQUEST['license'] ?? ($_REQUEST['serial'] ?? '')))));
     $customApiId = (int)($_REQUEST['api_id'] ?? ($_REQUEST['reset_api_id'] ?? 0));
 
     if ($key === '') {
@@ -401,19 +414,35 @@ if ($action === 'reset_key') {
         ], 400);
     }
 
-    // Key ta ei reseller (ba tar sub-account) er kena kina
+    // 1) Key ta ei account (ba tar sub-account) er kina
     $matchedLicense = lm_find_license($pdo, $key, (int)$reseller['id']);
+    $detectedApiId = $matchedLicense ? (int)$matchedLicense['resolved_reset_api_id'] : 0;
+
     if (!$matchedLicense) {
-        apiOutput([
-            'status'  => 'error',
-            'success' => false,
-            'message' => 'Security Error: This license key was not purchased from your account.',
-            'error'   => 'Key not found in account'
-        ], 403);
+        // 2) Onno account er key hole block (security). Amader DB-te nai emon key (provider theke kena)
+        //    hole panel er moto reset hobe — tobe api_id dite hobe.
+        $other = lm_find_license($pdo, $key, null);
+        if ($other) {
+            apiOutput([
+                'status'  => 'error',
+                'success' => false,
+                'message' => 'Security Error: This license key was not purchased from your account.',
+                'error'   => 'Key not found in account'
+            ], 403);
+        }
+        if ($customApiId <= 0) {
+            apiOutput([
+                'status'  => 'error',
+                'success' => false,
+                'message' => 'Key not found in our records. Please pass api_id (' . implode(', ', array_keys(lm_reset_apis())) . ') to reset it.',
+                'error'   => 'api_id required'
+            ], 400);
+        }
     }
 
-    $targetApiId = $customApiId > 0 ? $customApiId : (int)$matchedLicense['resolved_reset_api_id'];
-    if ($targetApiId <= 0) {
+    // Candidate list: customer er api_id age, tarpor amader detect kora id (ekta fail korle arektа try)
+    $candidates = array_values(array_unique(array_filter([$customApiId, $detectedApiId], fn($v) => (int)$v > 0)));
+    if (empty($candidates)) {
         apiOutput([
             'status'  => 'error',
             'success' => false,
@@ -422,18 +451,19 @@ if ($action === 'reset_key') {
         ], 400);
     }
 
-    $r = lm_do_reset($key, $targetApiId);
+    $r = lm_reset_with_fallback($key, $candidates);
+    $usedApiId = (int)$r['api_id'];
 
     if ($r['ok']) {
         logActivity($pdo, (int)$reseller['id'], (string)$reseller['username'], 'KEY_RESET',
-            "Key reset via API: {$key} (API #{$targetApiId} {$r['api_name']})");
+            "Key reset via API: {$key} (API #{$usedApiId} {$r['api_name']})");
     }
 
     apiOutput([
         'status'       => $r['ok'] ? 'success' : 'error',
         'success'      => $r['ok'],
         'message'      => $r['message'],
-        'api_id'       => $targetApiId,
+        'api_id'       => $usedApiId,
         'api_name'     => $r['api_name'],
         'product_name' => $matchedLicense['validity'] ?? 'License',
         'key'          => $key

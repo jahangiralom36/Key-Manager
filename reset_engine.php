@@ -4,6 +4,13 @@
 // Provider: licensemanager.shop (api_id 2,3,4,9,11,12) + Angry Mod Pinxt (99)
 // ====================================================================
 
+/** Provider response er true/false value (bool, 1, "true", "success", "ok") thikmoto bujhe. */
+function lm_is_truthy($v): bool {
+    if (is_bool($v)) return $v;
+    if (is_numeric($v)) return (int)$v === 1;
+    return in_array(strtolower(trim((string)$v)), ['true', 'success', 'ok', 'yes'], true);
+}
+
 /** Sob supported reset API gulo (token ekhane nei — token config.php te). */
 function lm_reset_apis(): array {
     return [
@@ -63,6 +70,21 @@ function lm_extract_provider_reset_id(array $item): int {
  * $ownerId set  => oi user ba tar sub-account er license.
  * Return: license row + product_name, resolved_reset_api_id  (ba null)
  */
+function lm_descendant_ids(PDO $pdo, int $ownerId, int $maxDepth = 4): array {
+    $all = [$ownerId];
+    $frontier = [$ownerId];
+    for ($d = 0; $d < $maxDepth && $frontier; $d++) {
+        $in = implode(',', array_map('intval', $frontier));
+        $rows = $pdo->query("SELECT id FROM users WHERE created_by IN ($in)")->fetchAll(PDO::FETCH_COLUMN);
+        $frontier = [];
+        foreach ($rows as $id) {
+            $id = (int)$id;
+            if (!in_array($id, $all, true)) { $all[] = $id; $frontier[] = $id; }
+        }
+    }
+    return $all;
+}
+
 function lm_find_license(PDO $pdo, string $key, ?int $ownerId = null): ?array {
     $sql = "SELECT l.*, p.name AS product_name, pl.plan_title AS plan_title_db,
                    pl.reset_api_id AS plan_reset_api_id, p.reset_api_id AS prod_reset_api_id
@@ -72,9 +94,9 @@ function lm_find_license(PDO $pdo, string $key, ?int $ownerId = null): ?array {
             WHERE l.license_key = ?";
     $params = [$key];
     if ($ownerId !== null) {
-        $sql .= " AND (l.user_id = ? OR l.user_id IN (SELECT id FROM users WHERE created_by = ?))";
-        $params[] = $ownerId;
-        $params[] = $ownerId;
+        // owner + tar sob sub-account (multi-level)
+        $ids = implode(',', array_map('intval', lm_descendant_ids($pdo, $ownerId)));
+        $sql .= " AND l.user_id IN ($ids)";
     }
     $sql .= " ORDER BY l.id DESC LIMIT 1";
     $st = $pdo->prepare($sql);
@@ -91,6 +113,23 @@ function lm_find_license(PDO $pdo, string $key, ?int $ownerId = null): ?array {
         (string)($row['plan_title_db'] ?? '')
     );
     return $row;
+}
+
+/**
+ * Candidate api id gulo ek ek kore try kore; prothom success-e thame.
+ * (Customer-er pathano api_id bhul hole amader detect kora ta try hobe, ulto-o.)
+ */
+function lm_reset_with_fallback(string $key, array $candidateIds, string $customToken = ''): array {
+    $tried = [];
+    $last = ['ok' => false, 'message' => 'No reset API available.', 'api_id' => 0, 'api_name' => ''];
+    foreach ($candidateIds as $id) {
+        $id = (int)$id;
+        if ($id <= 0 || in_array($id, $tried, true) || !isset(lm_reset_apis()[$id])) continue;
+        $tried[] = $id;
+        $last = lm_do_reset($key, $id, $customToken);
+        if ($last['ok']) return $last;
+    }
+    return $last;
 }
 
 /** Key er basic format check (injection / junk atkate). */
@@ -144,7 +183,7 @@ function lm_do_reset(string $key, int $apiId, string $customToken = ''): array {
 
         $res = json_decode($response, true);
         if (is_array($res)) {
-            if (!empty($res['success']) || (isset($res['status']) && strtolower((string)$res['status']) === 'success')) {
+            if ((isset($res['success']) && lm_is_truthy($res['success'])) || (isset($res['status']) && lm_is_truthy($res['status']))) {
                 $out['ok'] = true;
                 $out['message'] = (string)($res['message'] ?? 'Angry Mod HWID successfully reset!');
             } else {
@@ -188,7 +227,7 @@ function lm_do_reset(string $key, int $apiId, string $customToken = ''): array {
 
     $res = json_decode($response ?: '', true);
     if (is_array($res)) {
-        $success = !empty($res['success']) || (isset($res['status']) && strtolower((string)$res['status']) === 'success');
+        $success = (isset($res['success']) && lm_is_truthy($res['success'])) || (isset($res['status']) && lm_is_truthy($res['status']));
         if ($success && $http >= 200 && $http < 300) {
             $out['ok'] = true;
             $out['message'] = (string)($res['message'] ?? 'License HWID has been successfully reset!');
