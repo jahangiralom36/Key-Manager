@@ -709,13 +709,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $snzApiUrl = trim($settings['snzpay_api_url'] ?? 'https://snzpay.digital/api/verify_payment.php');
 
         if ($autoPaymentOn && !empty($snzLicenseKey)) {
-            $snz = snz_verify_payment($snzApiUrl, $snzLicenseKey, $trxId, (string)$method, $rawAmount, ($__cn = trim((string)($settings['snzpay_client_name'] ?? ''))) === '0' ? '' : $__cn);
+            // Binance e SNZ amount ta BDT-te convert kore dey, tai amount check bad (0); baki gateway e BDT amount check hoy
+            $snz = snz_verify_payment($snzApiUrl, $snzLicenseKey, $trxId, (string)$method, ($method === 'Binance') ? 0.0 : $rawAmount);
 
             if ($snz['ok']) {
-                // Binance e amount USD (USDT), baki gateway BDT => USD convert
+                // SNZ er data.amount sobsomoy BDT (Binance hole BDT-te convert kora) => USD
                 $creditedUSD = ($method === 'Binance')
-                    ? round($snz['amount'], 2)
+                    ? round($snz['amount'] / $binanceMarketRate, 2)
                     : round($snz['amount'] / $effectiveBdtRate, 2);
+                if (empty($sender) && !empty($snz['data']['sender'])) $sender = htmlspecialchars((string)$snz['data']['sender']);
 
                 $stmt = $pdo->prepare("INSERT INTO transactions (user_id, method, amount, sender_num, trx_id, status) VALUES (?, ?, ?, ?, ?, 'approved')");
                 $stmt->execute([$user['id'], $method, $creditedUSD, $sender, strtoupper($trxId)]);

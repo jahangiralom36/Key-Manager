@@ -147,55 +147,67 @@ function lm_get_provider_balance(): string {
 }
 
 
-// SNZ Pay (snzpay.digital) payment verification — POST JSON
-// body: license_key, client_name, trx_id, method(BKASH/NAGAD/ROCKET/BINANCE/BANGLA_QR), amount
-// success => status=success + data.amount | error => reason ba message
-function snz_verify_payment(string $apiUrl, string $licenseKey, string $trxId, string $method, float $amount, string $clientName = ''): array {
-    $allowed = ['BKASH', 'NAGAD', 'ROCKET', 'BINANCE', 'BANGLA_QR'];
-    $m = strtoupper(str_replace([' ', '-'], '_', trim($method)));
+// SNZ Pay (snzpay.digital) payment verification — POST (form), official latest doc
+// post: license_key, client_name, method, trx_id, amount (0 = amount check hobe na)
+// success => status=success + data.{amount(BDT), trx_id, sender, method} | error => reason ba message
+// client_name = site domain (Brand Key ekbar bind hoy, tai ekoi thakte hobe) — auto: SITE_URL er host.
+function snz_client_name(): string {
+    if (defined('SNZPAY_CLIENT_NAME') && SNZPAY_CLIENT_NAME !== '') return (string)SNZPAY_CLIENT_NAME;
+    $host = defined('SITE_URL') ? (string)parse_url((string)SITE_URL, PHP_URL_HOST) : '';
+    $host = strtolower(preg_replace('/^www\./i', '', $host));
+    return $host !== '' ? $host : 'keymanager.shop';
+}
+
+function snz_verify_payment(string $apiUrl, string $licenseKey, string $trxId, string $method, float $amount = 0.0, string $clientName = ''): array {
+    $allowed = ['bkash', 'nagad', 'rocket', 'upay', 'binance', 'bangla_qr'];
+    $m = strtolower(str_replace([' ', '-'], '_', trim($method)));
     if (!in_array($m, $allowed, true)) {
-        return ['ok' => false, 'amount' => 0.0, 'message' => 'Unsupported payment method for SNZ Pay.'];
+        return ['ok' => false, 'amount' => 0.0, 'message' => 'Unsupported payment method for SNZ Pay.', 'data' => []];
     }
     if ($apiUrl === '') $apiUrl = 'https://snzpay.digital/api/verify_payment.php';
+    if ($clientName === '') $clientName = snz_client_name();
+    // user jodi "https://site.com/" likhe fele, domain-e normalize
+    $clientName = strtolower(trim($clientName));
+    $clientName = preg_replace('#^https?://#', '', $clientName);
+    $clientName = rtrim($clientName, '/');
 
-    // client_name: website domain / bot username / app name (SNZ Pay brand key er shathe dorkar)
-    if ($clientName === '') {
-        $host = defined('SITE_URL') ? (string)parse_url((string)SITE_URL, PHP_URL_HOST) : '';
-        $clientName = $host !== '' ? $host : (defined('SITE_NAME') ? (string)SITE_NAME : 'keymanager');
-    }
-    $payload = [
+    $post = [
         'license_key' => trim($licenseKey),
-        'client_name' => $clientName,
-        'trx_id'      => strtoupper(trim($trxId)),
         'method'      => $m,
-        'amount'      => $amount
+        'trx_id'      => strtoupper(trim($trxId)),
+        'amount'      => $amount,
+        'client_name' => $clientName,
     ];
     $ch = curl_init($apiUrl);
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => json_encode($payload),
-        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_POSTFIELDS     => http_build_query($post),
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => 20,
-        CURLOPT_SSL_VERIFYPEER => false
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HTTPHEADER     => ['Accept: application/json'],
     ]);
     $res     = curl_exec($ch);
     $http    = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curlErr = curl_error($ch);
     curl_close($ch);
 
-    if ($curlErr) {
-        return ['ok' => false, 'amount' => 0.0, 'message' => 'SNZ Pay connection error. Please try again.'];
+    if ($res === false) {
+        return ['ok' => false, 'amount' => 0.0, 'message' => 'SNZ Pay server not reachable: ' . $curlErr, 'data' => []];
     }
-    $result = json_decode($res ?: '', true);
+    $result = json_decode($res, true);
     if (!is_array($result)) {
-        return ['ok' => false, 'amount' => 0.0, 'message' => 'Invalid response from SNZ Pay (HTTP ' . $http . ').'];
+        return ['ok' => false, 'amount' => 0.0, 'message' => 'Invalid response from SNZ Pay (HTTP ' . $http . ').', 'data' => []];
     }
     if (($result['status'] ?? '') === 'success') {
-        $verified = isset($result['data']['amount']) && is_numeric($result['data']['amount']) ? (float)$result['data']['amount'] : $amount;
-        return ['ok' => true, 'amount' => $verified, 'message' => (string)($result['message'] ?? 'Payment Verified')];
+        $data = is_array($result['data'] ?? null) ? $result['data'] : [];
+        $verified = isset($data['amount']) && is_numeric($data['amount']) ? (float)$data['amount'] : $amount;
+        return ['ok' => true, 'amount' => $verified, 'message' => (string)($result['message'] ?? 'Payment Verified'), 'data' => $data];
     }
-    return ['ok' => false, 'amount' => 0.0, 'message' => (string)($result['reason'] ?? ($result['message'] ?? 'SNZ Pay Verification Failed! Invalid TrxID or Amount.'))];
+    return ['ok' => false, 'amount' => 0.0,
+        'message' => (string)($result['reason'] ?? ($result['message'] ?? 'SNZ Pay Verification Failed! Invalid TrxID or Amount.')),
+        'data' => $result];
 }
 
 require_once __DIR__ . '/reset_engine.php';
