@@ -36,7 +36,9 @@ ALTER TABLE `users`
   ADD COLUMN IF NOT EXISTS `telegram_username` VARCHAR(100) NULL,
   ADD COLUMN IF NOT EXISTS `min_deposit` DECIMAL(10,2) DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS `max_deposit` DECIMAL(10,2) DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS `status` VARCHAR(20) DEFAULT 'active';
+  ADD COLUMN IF NOT EXISTS `status` VARCHAR(20) DEFAULT 'active',
+  ADD COLUMN IF NOT EXISTS `failed_logins` INT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS `blocked_at` DATETIME NULL;
 
 UPDATE `users` SET `api_enabled` = 1 WHERE `api_enabled` IS NULL;
 UPDATE `users` SET `api_key` = CONCAT('keymanager_live_', MD5(CONCAT(id, username, NOW(), RAND())))
@@ -191,6 +193,14 @@ CREATE TABLE IF NOT EXISTS `transactions` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- type: AUTO (SNZ auto deposit) | MANUAL (admin approve kora) | ADMIN_ADD | ADMIN_DEDUCT
+ALTER TABLE `transactions`
+  ADD COLUMN IF NOT EXISTS `type` VARCHAR(20) NOT NULL DEFAULT 'MANUAL',
+  ADD COLUMN IF NOT EXISTS `bonus_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS `note` VARCHAR(255) NULL;
+ALTER TABLE `transactions` ADD INDEX IF NOT EXISTS `idx_trx_user` (`user_id`);
+ALTER TABLE `transactions` ADD INDEX IF NOT EXISTS `idx_trx_trxid` (`trx_id`);
+
 -- --------------------------------------------------------------------
 -- 10. profit_withdrawals
 -- --------------------------------------------------------------------
@@ -277,3 +287,45 @@ SET pl.reset_api_id = CASE
     WHEN LOWER(CONCAT(p.name, ' ', pl.plan_title)) LIKE '%silent%'       THEN 11
     ELSE 0 END
 WHERE pl.reset_api_id IS NULL OR pl.reset_api_id = 0;
+
+-- --------------------------------------------------------------------
+-- 16. sub_reseller_pricing  (reseller nijer sub-reseller der price set kore)
+--     sub_user_id = 0  => "All my sub-resellers"
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `sub_reseller_pricing` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `parent_id` INT NOT NULL,
+  `sub_user_id` INT NOT NULL DEFAULT 0,
+  `plan_id` INT NOT NULL,
+  `price` DECIMAL(10,2) NOT NULL,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uq_parent_sub_plan` (`parent_id`, `sub_user_id`, `plan_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------------------
+-- 17. messages  (admin <-> reseller one-to-one chat; Bangla support)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `messages` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `sender_role` ENUM('admin', 'user') NOT NULL,
+  `body` TEXT NOT NULL,
+  `is_read` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_msg_user` (`user_id`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------------------
+-- 18. trusted_sessions  (Telegram verify ekbar korle 24 ghonta login thake)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `trusted_sessions` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `token_hash` CHAR(64) NOT NULL UNIQUE,
+  `tg_chat_id` BIGINT NULL,
+  `tg_username` VARCHAR(100) NULL,
+  `ip_address` VARCHAR(45) NULL,
+  `expires_at` DATETIME NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_ts_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

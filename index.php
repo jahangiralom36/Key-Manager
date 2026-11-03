@@ -22,8 +22,8 @@ if (!defined('TG_BOT_USERNAME')) {
     define('TG_BOT_USERNAME', 'keymanagerverifyBoT');
 }
 
-// Redirect if session is already authenticated
-if (isset($_SESSION['auth_logged_in']) && $_SESSION['auth_logged_in'] === true) {
+// Redirect if session is already authenticated (ba 24h trusted session thakle auto-login, OTP lagbe na)
+if ((isset($_SESSION['auth_logged_in']) && $_SESSION['auth_logged_in'] === true) || km_try_trusted_login($pdo)) {
     header('Location: dashboard.php');
     exit;
 }
@@ -139,40 +139,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
 
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? AND status = 'active' LIMIT 1");
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? LIMIT 1");
     $stmt->execute([$username]);
     $userData = $stmt->fetch();
 
-    if ($userData && password_verify($password, $userData['password'])) {
-        if (!empty($userData['telegram_chat_id'])) {
-            if ((string)$userData['telegram_chat_id'] !== (string)$_SESSION['tg_chat_id']) {
-                $_SESSION['flash_login_error'] = "CRITICAL SECURITY LOCK: This account is permanently tied to Telegram UID #" . $userData['telegram_chat_id'] . ". Access denied!";
-                header('Location: index.php');
-                exit;
-            } else {
-                session_regenerate_id(true);
-                $_SESSION['auth_logged_in'] = true;
-                $_SESSION['auth_user_id'] = $userData['id'];
-                $_SESSION['auth_username'] = $userData['username'];
-                header('Location: dashboard.php');
-                exit;
-            }
-        } else {
-            $pdo->prepare("UPDATE users SET telegram_chat_id = ?, telegram_username = ? WHERE id = ?")
-                ->execute([$_SESSION['tg_chat_id'], $_SESSION['tg_username'] ?? 'User', $userData['id']]);
+    $maxFails = 4; // 4 bar bhul hole account block
 
-            session_regenerate_id(true);
-            $_SESSION['auth_logged_in'] = true;
-            $_SESSION['auth_user_id'] = $userData['id'];
-            $_SESSION['auth_username'] = $userData['username'];
-            header('Location: dashboard.php');
-            exit;
-        }
-    } else {
-        $_SESSION['flash_login_error'] = "Invalid Username or Password!";
+    if ($userData && ($userData['status'] ?? '') === 'blocked') {
+        $_SESSION['flash_login_error'] = "Account BLOCKED: too many wrong attempts. Please contact Admin on the support channel to unblock.";
         header('Location: index.php');
         exit;
     }
+
+    if ($userData && ($userData['status'] ?? 'active') === 'active' && password_verify($password, $userData['password'])) {
+        if (!empty($userData['telegram_chat_id']) && (string)$userData['telegram_chat_id'] !== (string)$_SESSION['tg_chat_id']) {
+            $_SESSION['flash_login_error'] = "CRITICAL SECURITY LOCK: This account is permanently tied to Telegram UID #" . $userData['telegram_chat_id'] . ". Access denied!";
+            header('Location: index.php');
+            exit;
+        }
+
+        if (empty($userData['telegram_chat_id'])) {
+            $pdo->prepare("UPDATE users SET telegram_chat_id = ?, telegram_username = ? WHERE id = ?")
+                ->execute([$_SESSION['tg_chat_id'], $_SESSION['tg_username'] ?? 'User', $userData['id']]);
+        }
+        $pdo->prepare("UPDATE users SET failed_logins = 0 WHERE id = ?")->execute([$userData['id']]);
+
+        session_regenerate_id(true);
+        $_SESSION['auth_logged_in'] = true;
+        $_SESSION['auth_user_id'] = $userData['id'];
+        $_SESSION['auth_username'] = $userData['username'];
+        // 24 ghonta er jonno trusted — abar OTP lagbe na
+        km_issue_trust($pdo, (int)$userData['id'], $_SESSION['tg_chat_id'], (string)($_SESSION['tg_username'] ?? ''));
+        header('Location: dashboard.php');
+        exit;
+    }
+
+    // Wrong username/password => attempt count (shudhu valid username er jonno)
+    if ($userData && ($userData['status'] ?? 'active') === 'active') {
+        $fails = (int)($userData['failed_logins'] ?? 0) + 1;
+        if ($fails >= $maxFails) {
+            $pdo->prepare("UPDATE users SET failed_logins = ?, status = 'blocked', blocked_at = NOW() WHERE id = ?")->execute([$fails, $userData['id']]);
+            logActivity($pdo, (int)$userData['id'], (string)$userData['username'], 'ACCOUNT_BLOCKED', "Blocked after {$fails} wrong password attempts");
+            $_SESSION['flash_login_error'] = "Account BLOCKED after {$maxFails} wrong attempts. Please contact Admin on the support channel to unblock.";
+        } else {
+            $pdo->prepare("UPDATE users SET failed_logins = ? WHERE id = ?")->execute([$fails, $userData['id']]);
+            $left = $maxFails - $fails;
+            $_SESSION['flash_login_error'] = "Invalid Username or Password! {$left} attempt(s) left before your account is blocked.";
+        }
+    } else {
+        $_SESSION['flash_login_error'] = "Invalid Username or Password!";
+    }
+    header('Location: index.php');
+    exit;
 }
 ?>
 <!DOCTYPE html>

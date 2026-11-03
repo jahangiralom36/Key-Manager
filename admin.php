@@ -158,6 +158,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
     header('Content-Type: application/json');
     $action = $_POST['ajax_action'];
 
+    // SECURITY: ei sob endpoint shudhu logged-in admin er jonno (age auth chhilo na)
+    if (empty($_SESSION['admin_auth']) || empty($_SESSION['admin_tg_id']) || !isAuthorizedAdmin($pdo, $_SESSION['admin_tg_id'])) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Unauthorized']);
+        exit;
+    }
+
     // 1. Provider Products Fetch
     if ($action === 'get_provider_products') {
         $token = defined('PROVIDER_API_TOKEN') ? PROVIDER_API_TOKEN : (defined('LM_API_TOKEN') ? LM_API_TOKEN : '');
@@ -185,7 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
         $stmtSubs = $pdo->prepare("
             SELECT u.*, 
             (SELECT COUNT(*) FROM licenses WHERE user_id = u.id) AS sub_keys_count,
-            (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = u.id AND status = 'approved') AS sub_deposit_total
+            (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = u.id AND status = 'approved' AND type IN ('AUTO','MANUAL')) AS sub_deposit_total
             FROM users u 
             WHERE u.created_by = ? 
             ORDER BY u.id DESC
@@ -251,7 +258,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
             SELECT t.*, u.username, u.telegram_username 
             FROM transactions t 
             JOIN users u ON t.user_id = u.id 
-            WHERE t.status = 'approved' AND DATE(t.created_at) = CURDATE() 
+            WHERE t.status = 'approved' AND t.type IN ('AUTO','MANUAL') AND DATE(t.created_at) = CURDATE() 
             ORDER BY t.id DESC
         ");
         $stmt->execute();
@@ -292,7 +299,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
 
         $totalDeposited = 0.00;
         foreach ($deposits as $d) {
-            if ($d['status'] === 'approved') {
+            if ($d['status'] === 'approved' && in_array($d['type'] ?? 'MANUAL', ['AUTO','MANUAL'], true)) {
                 $totalDeposited += (float)$d['amount'];
             }
         }
@@ -311,6 +318,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
         ]);
         exit;
     }
+
+    // Notun reports / history / chat / stock endpoints
+    require __DIR__ . '/admin_ajax.php';
 
     echo json_encode(['success' => false, 'error' => 'Unknown Action Request']);
     exit;
@@ -380,6 +390,14 @@ if (empty($_SESSION['admin_auth']) || empty($_SESSION['admin_tg_id']) || !isAuth
     </body>
     </html>
     <?php
+    exit;
+}
+
+// --- CSV EXPORT (admin only): admin.php?export=keys | transactions ---
+if (isset($_GET['export']) && in_array($_GET['export'], ['keys', 'transactions'], true)) {
+    $GLOBALS['__admin_export'] = $_GET['export'];
+    $action = '';
+    require __DIR__ . '/admin_ajax.php';
     exit;
 }
 
@@ -983,7 +1001,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_action'])) {
         $userId = (int)$_POST['user_id'];
         $amount = (float)$_POST['amount'];
         if ($_POST['type'] === 'deduct') $amount = -$amount;
-        $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?")->execute([$amount, $userId]);
+        if ($amount != 0.0 && $userId > 0) {
+            $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?")->execute([$amount, $userId]);
+            // Admin er add/cut alada transaction hishebe save (+ / - dekhabe)
+            km_record_trx($pdo, $userId, $amount > 0 ? 'ADMIN_ADD' : 'ADMIN_DEDUCT', $amount, 'ADMIN',
+                'ADM-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 8)), 'approved', '', trim((string)($_POST['note'] ?? '')) ?: 'Balance adjusted by Admin');
+        }
         $toast = ['type' => 'success', 'msg' => "Wallet balance adjusted by $$amount USD."];
     }
 
@@ -997,7 +1020,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_action'])) {
     if ($act === 'toggle_ban') {
         $userId = (int)$_POST['user_id'];
         $newStatus = $_POST['status'] === 'active' ? 'banned' : 'active';
-        $pdo->prepare("UPDATE users SET status = ? WHERE id = ?")->execute([$newStatus, $userId]);
+        $pdo->prepare("UPDATE users SET status = ?, failed_logins = 0, blocked_at = NULL WHERE id = ?")->execute([$newStatus, $userId]);
         $toast = ['type' => 'success', 'msg' => "Account access shifted to: " . strtoupper($newStatus)];
     }
 
@@ -1066,20 +1089,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_action'])) {
             if ($status === 'approved') {
                 $depositUSD = (float)$trx['amount'];
 
-                $stmtBonus = $pdo->prepare("SELECT bonus_amount, bonus_type FROM deposit_bonuses WHERE min_amount <= ? ORDER BY min_amount DESC LIMIT 1");
-                $stmtBonus->execute([$depositUSD]);
-                $bonusRow = $stmtBonus->fetch();
-
-                $bonusCredit = 0;
-                if ($bonusRow) {
-                    if ($bonusRow['bonus_type'] === 'percent') {
-                        $bonusCredit = round($depositUSD * ((float)$bonusRow['bonus_amount'] / 100), 2);
-                    } else {
-                        $bonusCredit = (float)$bonusRow['bonus_amount'];
-                    }
-                }
+                $bonusCredit = km_calc_bonus($pdo, $depositUSD);
 
                 $totalCredit = $depositUSD + $bonusCredit;
+                $pdo->prepare("UPDATE transactions SET bonus_amount = ? WHERE id = ?")->execute([$bonusCredit, $trxId]);
                 $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?")->execute([$totalCredit, $trx['user_id']]);
 
                 $msg = "Deposit verified: $$depositUSD credited";
@@ -1121,8 +1134,8 @@ $salesMonthUSD = $pdo->query("
 ")->fetchColumn() ?: 0.00;
 
 $todayKeysCount = $pdo->query("SELECT COUNT(*) FROM licenses WHERE DATE(created_at) = CURDATE()")->fetchColumn() ?: 0;
-$todayDepositsUSD = $pdo->query("SELECT COALESCE(SUM(amount), 0.00) FROM transactions WHERE status = 'approved' AND DATE(created_at) = CURDATE()")->fetchColumn() ?: 0.00;
-$todayDepositsCount = $pdo->query("SELECT COUNT(*) FROM transactions WHERE status = 'approved' AND DATE(created_at) = CURDATE()")->fetchColumn() ?: 0;
+$todayDepositsUSD = $pdo->query("SELECT COALESCE(SUM(amount), 0.00) FROM transactions WHERE status = 'approved' AND type IN ('AUTO','MANUAL') AND DATE(created_at) = CURDATE()")->fetchColumn() ?: 0.00;
+$todayDepositsCount = $pdo->query("SELECT COUNT(*) FROM transactions WHERE status = 'approved' AND type IN ('AUTO','MANUAL') AND DATE(created_at) = CURDATE()")->fetchColumn() ?: 0;
 
 // Resellers Array with Sub-Accounts counter
 $resellers = $pdo->query("
@@ -1318,6 +1331,13 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 </button>
                 <button onclick="switchAdminTab('tab-logs', 'Security & Login Telemetry')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
                     <i class="fa-solid fa-fingerprint w-4 text-rose-400"></i><span>Audit & Geo Logs</span>
+                </button>
+                <button onclick="switchAdminTab('tab-reports', 'Reports')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
+                    <i class="fa-solid fa-chart-column w-4 text-cyan-400"></i><span>Reports & History</span>
+                </button>
+                <button onclick="switchAdminTab('tab-chat', 'Messages')" class="drawer-btn w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#111b33] hover:text-cyan-300 transition text-left">
+                    <i class="fa-solid fa-comments w-4 text-emerald-400"></i><span>Messages</span>
+                    <span id="chatUnreadBadge" class="hidden ml-auto px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold">0</span>
                 </button>
             </nav>
         </div>
@@ -2578,79 +2598,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
         <!-- ================================================================= -->
         <!-- TAB 8: DEPOSITS VERIFICATION & CLEARING TERMINAL                  -->
         <!-- ================================================================= -->
-        <section id="tab-deposits" class="tab-section hidden space-y-5">
-            <div class="noc-card p-6 space-y-4">
-                <div class="flex justify-between items-center pb-3 border-b border-cyber-border">
-                    <div class="flex items-center space-x-3">
-                        <div class="w-9 h-9 rounded-xl bg-teal-500/15 text-teal-400 flex items-center justify-center text-sm border border-teal-500/30">
-                            <i class="fa-solid fa-vault"></i>
-                        </div>
-                        <div>
-                            <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Deposits</h3>
-                        </div>
-                    </div>
-                                    </div>
-                <?php
-                $depCounts = ['all' => count($transactions), 'pending' => 0, 'approved' => 0, 'rejected' => 0];
-                foreach ($transactions as $__t) { if (isset($depCounts[$__t['status']])) $depCounts[$__t['status']]++; }
-                ?>
-                <div class="grid grid-cols-4 gap-2" id="depFilterBar">
-                    <button type="button" data-dep-filter="all" onclick="filterDeposits('all')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">All <span class="opacity-70">(<?= $depCounts['all'] ?>)</span></button>
-                    <button type="button" data-dep-filter="pending" onclick="filterDeposits('pending')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">Pending <span class="opacity-70">(<?= $depCounts['pending'] ?>)</span></button>
-                    <button type="button" data-dep-filter="approved" onclick="filterDeposits('approved')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">Approved <span class="opacity-70">(<?= $depCounts['approved'] ?>)</span></button>
-                    <button type="button" data-dep-filter="rejected" onclick="filterDeposits('rejected')" class="dep-filter-btn py-2 rounded-xl text-[11px] font-bold font-mono border transition">Rejected <span class="opacity-70">(<?= $depCounts['rejected'] ?>)</span></button>
-                </div>
-
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left text-xs font-mono">
-                        <thead>
-                            <tr class="text-gray-400 border-b border-cyber-border">
-                                <th class="pb-2.5">Reseller Identity</th>
-                                <th class="pb-2.5">Gateway</th>
-                                <th class="pb-2.5">Requested USD</th>
-                                <th class="pb-2.5">Sender Number</th>
-                                <th class="pb-2.5">Transaction ID</th>
-                                <th class="pb-2.5">Status</th>
-                                <th class="pb-2.5 text-right">Audit Action</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-cyber-border text-[11px]">
-                            <?php if (empty($transactions)): ?>
-                                <tr><td colspan="7" class="py-6 text-center text-gray-500 italic">No deposits.</td></tr>
-                            <?php else: ?>
-                                <?php foreach($transactions as $t): ?>
-                                    <tr class="hover:bg-[#0c1326] dep-row" data-status="<?= htmlspecialchars($t['status']) ?>">
-                                        <td class="py-2.5 font-bold text-white font-sans"><?= htmlspecialchars($t['username']) ?></td>
-                                        <td class="py-2.5 text-cyan-400 font-bold"><?= $t['method'] ?></td>
-                                        <td class="py-2.5 font-black text-emerald-400 text-xs">$<?= number_format((float)$t['amount'], 2) ?></td>
-                                        <td class="py-2.5 text-gray-300"><?= $t['sender_num'] ?></td>
-                                        <td class="py-2.5 text-cyan-300 font-bold select-all"><?= $t['trx_id'] ?></td>
-                                        <td class="py-2.5">
-                                            <span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase <?= $t['status'] === 'approved' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : ($t['status'] === 'pending' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30') ?>">
-                                                <?= strtoupper($t['status']) ?>
-                                            </span>
-                                        </td>
-                                        <td class="py-2.5 text-right">
-                                            <?php if ($t['status'] === 'pending'): ?>
-                                                <form method="POST" class="inline">
-                                                    <input type="hidden" name="admin_action" value="manage_trx">
-                                                    <input type="hidden" name="active_tab" value="tab-deposits">
-                                                    <input type="hidden" name="trx_db_id" value="<?= $t['id'] ?>">
-                                                    <button type="submit" name="status" value="approved" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-[10px] font-bold text-white mr-1 shadow-sm transition">Approve</button>
-                                                    <button type="submit" name="status" value="rejected" class="px-2.5 py-1 bg-red-600 hover:bg-red-500 rounded text-[10px] font-bold text-white shadow-sm transition">Reject</button>
-                                                </form>
-                                            <?php else: ?>
-                                                <span class="text-gray-500 text-[10px]">Settled</span>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </section>
+        <?php include __DIR__ . '/admin_extra_tabs.php'; ?>
 
         <!-- ================================================================= -->
         <!-- TAB 9: SECURITY, ACTIVITY & GEO TELEMETRY AUDIT                   -->
@@ -3338,6 +3286,7 @@ $providerBalance = function_exists('lm_get_provider_balance') ? lm_get_provider_
                 document.getElementById('headerSectionTitle').innerText = titleName;
             }
 
+            if (typeof window.onAdminTabShow === 'function') window.onAdminTabShow(sectionId);
             sessionStorage.setItem('admin_active_tab', sectionId);
             sessionStorage.setItem('admin_active_title', titleName);
             window.scrollTo({ top: 0, behavior: 'smooth' });

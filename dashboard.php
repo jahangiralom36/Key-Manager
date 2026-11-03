@@ -15,6 +15,7 @@ $permittedResetApis = lm_reset_apis();
 
 // 1. Session Logout Handler
 if (isset($_GET['logout']) || (isset($_GET['action']) && $_GET['action'] === 'logout')) {
+    km_clear_trust($pdo);
     $_SESSION = [];
     if (ini_get("session.use_cookies")) {
         $params = session_get_cookie_params();
@@ -24,6 +25,9 @@ if (isset($_GET['logout']) || (isset($_GET['action']) && $_GET['action'] === 'lo
     header('Location: index.php');
     exit;
 }
+
+// 24h trusted session: session haray gele-o cookie thakle auto restore
+if (empty($_SESSION['auth_logged_in'])) { km_try_trusted_login($pdo); }
 
 // Zero-Bypass Security Guard
 if (empty($_SESSION['auth_logged_in']) || empty($_SESSION['auth_user_id']) || empty($_SESSION['tg_verified']) || $_SESSION['tg_verified'] !== true) {
@@ -103,6 +107,8 @@ $catalogStructure = [];
 $apiPlanList = []; 
 $productsResetMapping = [];
 
+$__parentPriceMap = !empty($user['created_by']) ? km_parent_prices_map($pdo, (int)$user['created_by'], (int)$user['id']) : [];
+
 try {
     $dbProducts = $pdo->query("SELECT p.id as product_id, p.name as product_name, 
                                       COALESCE(p.discount_percent, 0) as prod_discount,
@@ -145,6 +151,12 @@ try {
             if ($activeDiscount > 0) {
                 $discountDeduction = round($regularPrice * ($activeDiscount / 100), 2);
                 $dealPrice = max(0.01, round($regularPrice - $discountDeduction, 2));
+            }
+
+            // Parent reseller nijer sub er jonno price set korle (admin custom price na thakle) seta-i final
+            if ((float)$dp['custom_user_price'] <= 0 && isset($__parentPriceMap[$planId])) {
+                $regularPrice = $dealPrice = round($__parentPriceMap[$planId], 2);
+                $activeDiscount = 0;
             }
 
             $resolvedResetApiId = lm_resolve_reset_api_id($dp['plan_reset_api_id'], $dp['prod_reset_api_id'], $pName, 0, (string)$dp['validity']);
@@ -251,6 +263,12 @@ if (isset($_POST['ajax_action']) && $_POST['ajax_action'] === 'live_generate') {
         $unitPrice = max(0.01, round($baseUnit - ($baseUnit * ($planDiscount / 100)), 2));
     }
 
+    // Parent reseller er set kora price (admin custom price na thakle)
+    if ((float)$plan['custom_user_price'] <= 0 && !empty($user['created_by'])) {
+        $__ov = km_parent_price($pdo, (int)$user['created_by'], (int)$user['id'], $planId);
+        if ($__ov !== null) { $unitPrice = round($__ov, 2); $planDiscount = 0; }
+    }
+
     $totalCost = round($unitPrice * $quantity, 2);
     $productFullName = $plan['product_name'] . ' (' . $plan['plan_title'] . ')';
     $resolvedResetApiId = lm_resolve_reset_api_id($plan['plan_reset_api_id'], $plan['prod_reset_api_id'], (string)$plan['product_name'], 0, (string)$plan['plan_title']);
@@ -347,7 +365,12 @@ if (isset($_POST['ajax_action']) && $_POST['ajax_action'] === 'live_generate') {
         $pdo->prepare("UPDATE users SET balance = balance - ? WHERE id = ?")->execute([$totalCost, $user['id']]);
 
         if (!empty($user['created_by'])) {
-            $wholesalePrice = (float)$plan['reseller_price'] * $quantity;
+            // Parent er asol cost (tar price chain shoho) — sell price er theke kome gele-i profit
+            $__pStmt = $pdo->prepare("SELECT * FROM users WHERE id = ? LIMIT 1");
+            $__pStmt->execute([(int)$user['created_by']]);
+            $__parentRow = $__pStmt->fetch();
+            $__parentCost = $__parentRow ? km_deal_price_for_user($pdo, $__parentRow, $planId) : null;
+            $wholesalePrice = ($__parentCost !== null ? $__parentCost : (float)$plan['reseller_price']) * $quantity;
             $commissionEarned = round($totalCost - $wholesalePrice, 2);
             if ($commissionEarned > 0) {
                 $pdo->prepare("UPDATE users SET profit_balance = profit_balance + ? WHERE id = ?")
@@ -374,6 +397,129 @@ if (isset($_POST['ajax_action']) && $_POST['ajax_action'] === 'live_generate') {
     } catch (Exception $e) {
         $pdo->rollBack();
         echo json_encode(['status' => 'error', 'message' => 'Transaction error: ' . $e->getMessage()]);
+        exit;
+    }
+}
+
+// 3b. AJAX: Change Password / Price Edit / Chat
+if (isset($_POST['ajax_action']) && in_array($_POST['ajax_action'], ['change_password', 'get_sub_prices', 'save_sub_prices', 'chat_fetch', 'chat_send', 'chat_unread'], true)) {
+    header('Content-Type: application/json');
+    $act = $_POST['ajax_action'];
+
+    // ---- Change password
+    if ($act === 'change_password') {
+        $cur = (string)($_POST['current_password'] ?? '');
+        $new = (string)($_POST['new_password'] ?? '');
+        $rep = (string)($_POST['confirm_password'] ?? '');
+        if (!password_verify($cur, (string)$user['password'])) { echo json_encode(['status' => 'error', 'message' => 'Current password is incorrect!']); exit; }
+        if (strlen($new) < 6)   { echo json_encode(['status' => 'error', 'message' => 'New password must be at least 6 characters.']); exit; }
+        if ($new !== $rep)      { echo json_encode(['status' => 'error', 'message' => 'New password and confirm password do not match.']); exit; }
+        if ($new === $cur)      { echo json_encode(['status' => 'error', 'message' => 'New password must be different from the current one.']); exit; }
+        $pdo->prepare("UPDATE users SET password = ? WHERE id = ?")->execute([password_hash($new, PASSWORD_DEFAULT), $user['id']]);
+        logActivity($pdo, (int)$user['id'], (string)$user['username'], 'PASSWORD_CHANGE', 'Password changed by user');
+        echo json_encode(['status' => 'success', 'message' => 'Password changed successfully!']);
+        exit;
+    }
+
+    // ---- Price Edit (reseller -> sub-resellers). Target 0 = All my sub-resellers
+    if ($act === 'get_sub_prices' || $act === 'save_sub_prices') {
+        if (!$isReseller) { echo json_encode(['status' => 'error', 'message' => 'Only resellers can edit prices.']); exit; }
+        $target = (int)($_POST['target'] ?? 0);
+        if ($target > 0) {
+            $chk = $pdo->prepare("SELECT id FROM users WHERE id = ? AND created_by = ? LIMIT 1");
+            $chk->execute([$target, $user['id']]);
+            if (!$chk->fetch()) { echo json_encode(['status' => 'error', 'message' => 'Sub-reseller not found.']); exit; }
+        }
+        $myPrices = km_prices_for_user($pdo, $user);   // "You pay"
+
+        if ($act === 'get_sub_prices') {
+            $defaults = km_prices_for_user($pdo, ['id' => 0, 'role' => 'reseller', 'created_by' => null]); // parent override chhara sub er normal price
+            $st = $pdo->prepare("SELECT sub_user_id, plan_id, price FROM sub_reseller_pricing WHERE parent_id = ? AND sub_user_id IN (?, 0)");
+            $st->execute([$user['id'], $target]);
+            $all = []; $own = [];
+            foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) { if ((int)$r['sub_user_id'] === 0) $all[(int)$r['plan_id']] = (float)$r['price']; else $own[(int)$r['plan_id']] = (float)$r['price']; }
+
+            $plans = $pdo->query("SELECT pl.id AS plan_id, p.name AS product_name, pl.plan_title, pl.duration_days
+                                  FROM product_plans pl JOIN products p ON pl.product_id = p.id
+                                  WHERE p.is_active = 1 ORDER BY p.name ASC, pl.duration_days ASC, pl.id ASC")->fetchAll(PDO::FETCH_ASSOC);
+            $rows = [];
+            foreach ($plans as $pl) {
+                $pid = (int)$pl['plan_id'];
+                if (!isset($myPrices[$pid])) continue;
+                $effective = $own[$pid] ?? ($all[$pid] ?? ($defaults[$pid] ?? $myPrices[$pid]));
+                $custom = ($target > 0) ? ($own[$pid] ?? null) : ($all[$pid] ?? null);
+                $rows[] = [
+                    'plan_id' => $pid, 'name' => $pl['product_name'], 'plan' => $pl['plan_title'],
+                    'you_pay' => $myPrices[$pid], 'subs_pay' => $effective, 'custom' => $custom
+                ];
+            }
+            echo json_encode(['status' => 'success', 'rows' => $rows]);
+            exit;
+        }
+
+        // save: prices = JSON {planId: price|""} ; clear_all = 1
+        if (!empty($_POST['clear_all'])) {
+            $pdo->prepare("DELETE FROM sub_reseller_pricing WHERE parent_id = ? AND sub_user_id = ?")->execute([$user['id'], $target]);
+            echo json_encode(['status' => 'success', 'message' => 'All custom prices cleared.']);
+            exit;
+        }
+        $in = json_decode((string)($_POST['prices'] ?? '{}'), true);
+        if (!is_array($in)) { echo json_encode(['status' => 'error', 'message' => 'Invalid data.']); exit; }
+
+        $pdo->beginTransaction();
+        try {
+            $del = $pdo->prepare("DELETE FROM sub_reseller_pricing WHERE parent_id = ? AND sub_user_id = ? AND plan_id = ?");
+            $ins = $pdo->prepare("INSERT INTO sub_reseller_pricing (parent_id, sub_user_id, plan_id, price) VALUES (?, ?, ?, ?)
+                                  ON DUPLICATE KEY UPDATE price = VALUES(price)");
+            $saved = 0;
+            foreach ($in as $pid => $val) {
+                $pid = (int)$pid;
+                if (!isset($myPrices[$pid])) continue;
+                if ($val === '' || $val === null) { $del->execute([$user['id'], $target, $pid]); continue; }
+                $price = round((float)$val, 2);
+                // Nijer cost (You pay) er kome set kora jabe na — shudhu barano jabe
+                if ($price < $myPrices[$pid]) {
+                    $pdo->rollBack();
+                    echo json_encode(['status' => 'error', 'message' => 'Price cannot be lower than your own price ($' . number_format($myPrices[$pid], 2) . ')!']);
+                    exit;
+                }
+                if ($price > 100000) continue;
+                $ins->execute([$user['id'], $target, $pid, $price]);
+                $saved++;
+            }
+            $pdo->commit();
+            echo json_encode(['status' => 'success', 'message' => "Prices saved ($saved updated)."]);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            echo json_encode(['status' => 'error', 'message' => 'Could not save prices.']);
+        }
+        exit;
+    }
+
+    // ---- Chat (reseller <-> admin)
+    if ($act === 'chat_fetch') {
+        $after = (int)($_POST['after_id'] ?? 0);
+        $st = $pdo->prepare("SELECT id, sender_role, body, created_at FROM messages WHERE user_id = ? AND id > ? ORDER BY id ASC LIMIT 200");
+        $st->execute([$user['id'], $after]);
+        $pdo->prepare("UPDATE messages SET is_read = 1 WHERE user_id = ? AND sender_role = 'admin' AND is_read = 0")->execute([$user['id']]);
+        echo json_encode(['status' => 'success', 'rows' => $st->fetchAll(PDO::FETCH_ASSOC)]);
+        exit;
+    }
+    if ($act === 'chat_send') {
+        $body = trim((string)($_POST['body'] ?? ''));
+        if ($body === '' || mb_strlen($body) > 2000) { echo json_encode(['status' => 'error', 'message' => 'Message empty or too long']); exit; }
+        // spam atkate: 1 minute e max 20 ta
+        $rc = $pdo->prepare("SELECT COUNT(*) FROM messages WHERE user_id = ? AND sender_role = 'user' AND created_at >= NOW() - INTERVAL 1 MINUTE");
+        $rc->execute([$user['id']]);
+        if ((int)$rc->fetchColumn() >= 20) { echo json_encode(['status' => 'error', 'message' => 'Too many messages. Please slow down.']); exit; }
+        $pdo->prepare("INSERT INTO messages (user_id, sender_role, body, is_read) VALUES (?, 'user', ?, 0)")->execute([$user['id'], $body]);
+        echo json_encode(['status' => 'success']);
+        exit;
+    }
+    if ($act === 'chat_unread') {
+        $uc = $pdo->prepare("SELECT COUNT(*) FROM messages WHERE user_id = ? AND sender_role = 'admin' AND is_read = 0");
+        $uc->execute([$user['id']]);
+        echo json_encode(['status' => 'success', 'unread' => (int)$uc->fetchColumn()]);
         exit;
     }
 }
@@ -434,6 +580,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             exit;
         }
 
+        // Sub-reseller account khulte minimum $10 deposit (initial grant) dorkar
+        if (!empty($subUser) && !empty($subPass) && $subBal < 10) {
+            $_SESSION['flash_toast'] = ['type' => 'error', 'msg' => 'Sub-reseller account requires a minimum $10 deposit as initial balance!'];
+            header('Location: dashboard.php');
+            exit;
+        }
+
         if (!empty($subUser) && !empty($subPass)) {
             $pdo->beginTransaction();
             try {
@@ -474,6 +627,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $apiEnabled = (((int)($user['api_enabled'] ?? 1) === 1) && isset($_POST['api_enabled'])) ? 1 : 0;
         $customRate = (float)$_POST['custom_bdt_rate'];
         $status = ($_POST['status'] === 'banned') ? 'banned' : 'active';
+        // Wrong-password e BLOCKED account shudhu Admin unblock korte parbe
+        $__cs = $pdo->prepare("SELECT status FROM users WHERE id = ? AND created_by = ?");
+        $__cs->execute([$targetId, $user['id']]);
+        if ($__cs->fetchColumn() === 'blocked') $status = 'blocked';
         
         $subAllowedReq = isset($_POST['allowed_products']) ? (array)$_POST['allowed_products'] : [];
         $subAllowedFiltered = array_intersect($subAllowedReq, $userAllowedProducts);
@@ -719,12 +876,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     : round($snz['amount'] / $effectiveBdtRate, 2);
                 if (empty($sender) && !empty($snz['data']['sender'])) $sender = htmlspecialchars((string)$snz['data']['sender']);
 
-                $stmt = $pdo->prepare("INSERT INTO transactions (user_id, method, amount, sender_num, trx_id, status) VALUES (?, ?, ?, ?, ?, 'approved')");
-                $stmt->execute([$user['id'], $method, $creditedUSD, $sender, strtoupper($trxId)]);
+                $bonusUSD = km_calc_bonus($pdo, $creditedUSD);
+                km_record_trx($pdo, (int)$user['id'], 'AUTO', $creditedUSD, (string)$method, strtoupper($trxId), 'approved', (string)$sender, 'SNZ Pay auto verified', $bonusUSD);
+                $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?")->execute([$creditedUSD + $bonusUSD, $user['id']]);
 
-                $pdo->prepare("UPDATE users SET balance = balance + ? WHERE id = ?")->execute([$creditedUSD, $user['id']]);
-
-                $_SESSION['flash_toast'] = ['type' => 'success', 'msg' => "Payment Verified! $$creditedUSD USD added to your wallet."];
+                $_SESSION['flash_toast'] = ['type' => 'success', 'msg' => "Payment Verified! $$creditedUSD USD added" . ($bonusUSD > 0 ? " + $$bonusUSD bonus!" : " to your wallet.")];
                 header('Location: dashboard.php');
                 exit;
             } else {
@@ -733,8 +889,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 exit;
             }
         } else {
-            $stmt = $pdo->prepare("INSERT INTO transactions (user_id, method, amount, sender_num, trx_id, status) VALUES (?, ?, ?, ?, ?, 'pending')");
-            $stmt->execute([$user['id'], $method, $amountInUsd, $sender, strtoupper($trxId)]);
+            km_record_trx($pdo, (int)$user['id'], 'MANUAL', $amountInUsd, (string)$method, strtoupper($trxId), 'pending', (string)$sender);
 
             $_SESSION['flash_toast'] = ['type' => 'success', 'msg' => "Deposit submitted for $$amountInUsd USD! Waiting for review."];
             header('Location: dashboard.php');
@@ -755,7 +910,7 @@ if ($isReseller) {
     $stmtSubs = $pdo->prepare("
         SELECT u.*, 
         (SELECT COUNT(*) FROM licenses WHERE user_id = u.id) AS sub_keys_count,
-        (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = u.id AND status = 'approved') AS sub_deposit_total
+        (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = u.id AND status = 'approved' AND type IN ('AUTO','MANUAL')) AS sub_deposit_total
         FROM users u 
         WHERE u.created_by = ? 
         ORDER BY u.id DESC
@@ -767,7 +922,23 @@ if ($isReseller) {
 $keys = $pdo->query("SELECT * FROM licenses WHERE user_id = {$user['id']} ORDER BY id DESC LIMIT 20")->fetchAll();
 $keys = lm_enrich_licenses_reset($pdo, $keys);
 $totalKeysCount = (int)$pdo->query("SELECT COUNT(*) FROM licenses WHERE user_id = {$user['id']}")->fetchColumn();
-$deposits = $pdo->query("SELECT * FROM transactions WHERE user_id = {$user['id']} ORDER BY id DESC LIMIT 8")->fetchAll();
+$deposits = $pdo->query("SELECT * FROM transactions WHERE user_id = {$user['id']} ORDER BY id DESC LIMIT 40")->fetchAll();
+
+// Deposit offer slabs (admin set kore) — reseller dekhbe ar select korte parbe
+$bonusSlabs = [];
+try { $bonusSlabs = $pdo->query("SELECT min_amount, bonus_amount, bonus_type FROM deposit_bonuses ORDER BY min_amount ASC")->fetchAll(PDO::FETCH_ASSOC); } catch (Throwable $e) {}
+
+// My Sales: kon hack/variant/validity koyta bikri korechi
+$mySales = [];
+try {
+    $stSales = $pdo->prepare("SELECT COALESCE(p.name, 'Other') AS product_name, COALESCE(pl.plan_title, l.validity) AS plan_title,
+                                     COUNT(*) AS sold, COALESCE(SUM(l.price), 0) AS revenue
+                              FROM licenses l LEFT JOIN products p ON l.product_id = p.id LEFT JOIN product_plans pl ON l.plan_id = pl.id
+                              WHERE l.user_id = ? GROUP BY l.product_id, l.plan_id, product_name, plan_title ORDER BY product_name ASC, sold DESC");
+    $stSales->execute([$user['id']]);
+    foreach ($stSales->fetchAll(PDO::FETCH_ASSOC) as $__r) $mySales[$__r['product_name']][] = $__r;
+} catch (Throwable $e) {}
+
 
 $stmtAllKeys = $pdo->prepare("SELECT l.license_key, l.validity, l.reset_api_id, l.plan_id, l.product_id, p.name as product_name 
                              FROM licenses l 
@@ -896,11 +1067,10 @@ $userAllResetKeys = lm_enrich_licenses_reset($pdo, $stmtAllKeys->fetchAll(PDO::F
                 <div class="w-12 h-12 mx-auto rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xl mb-2 border border-amber-500/40 animate-pulse">
                     <i class="fa-solid fa-bell"></i>
                 </div>
-                <h3 class="text-sm font-black text-white uppercase tracking-wider bangla-text">অফিসিয়াল নোটিশ বোর্ড</h3>
-                <p class="text-[11px] text-gray-400 bangla-text">এডমিন প্যানেল থেকে পাঠানো গুরুত্বপূর্ণ বার্তা</p>
+                <h3 class="text-[13px] font-black text-white tracking-wide bangla-text">নোটিশ বোর্ড</h3>
             </div>
 
-            <div class="bg-[#080312] p-4 rounded-2xl border border-amber-500/30 text-xs text-amber-200 leading-relaxed max-h-60 overflow-y-auto bangla-text">
+            <div class="bg-[#080312] p-3.5 rounded-2xl border border-amber-500/30 text-[11px] text-amber-100/90 leading-5 max-h-60 overflow-y-auto bangla-text">
                 <p id="noticeModalBody"><?= nl2br(htmlspecialchars($settings['broadcast_notice'] ?? '', ENT_QUOTES, 'UTF-8')) ?></p>
             </div>
 
@@ -1066,6 +1236,22 @@ $userAllResetKeys = lm_enrich_licenses_reset($pdo, $stmtAllKeys->fetchAll(PDO::F
 
                 <button onclick="goToPage('history')" id="nav-history" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#1b1138] transition">
                     <i class="fa-solid fa-clock-rotate-left w-4"></i><span>Key History</span>
+                </button>
+
+                <button onclick="goToPage('sales')" id="nav-sales" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#1b1138] transition">
+                    <i class="fa-solid fa-chart-column w-4 text-amber-400"></i><span>My Sales</span>
+                </button>
+                <?php if ($isReseller): ?>
+                <button onclick="goToPage('priceedit')" id="nav-priceedit" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#1b1138] transition">
+                    <i class="fa-solid fa-tags w-4 text-emerald-400"></i><span>Price Edit</span>
+                </button>
+                <?php endif; ?>
+                <button onclick="goToPage('chat')" id="nav-chat" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#1b1138] transition">
+                    <i class="fa-solid fa-comments w-4 text-cyan-400"></i><span>Messages</span>
+                    <span id="chatNavBadge" class="hidden ml-auto px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold">0</span>
+                </button>
+                <button onclick="goToPage('account')" id="nav-account" class="nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-[#1b1138] transition">
+                    <i class="fa-solid fa-user-shield w-4 text-fuchsia-400"></i><span>Password</span>
                 </button>
 
                 <?php if ($canAddFund === 1): ?>
@@ -1473,6 +1659,24 @@ $userAllResetKeys = lm_enrich_licenses_reset($pdo, $stmtAllKeys->fetchAll(PDO::F
                     </button>
                 </div>
 
+                <?php if (!empty($bonusSlabs)): ?>
+                <div class="space-y-2">
+                    <span class="text-[11px] font-bold text-amber-300 flex items-center gap-1.5"><i class="fa-solid fa-gift"></i> Deposit Offers — tap to select</span>
+                    <div class="grid grid-cols-2 gap-2">
+                        <?php foreach ($bonusSlabs as $__b):
+                            $__min = (float)$__b['min_amount'];
+                            $__bonus = $__b['bonus_type'] === 'percent' ? round($__min * ((float)$__b['bonus_amount'] / 100), 2) : (float)$__b['bonus_amount'];
+                            $__bl = $__b['bonus_type'] === 'percent' ? rtrim(rtrim(number_format((float)$__b['bonus_amount'], 2), '0'), '.') . '%' : '$' . rtrim(rtrim(number_format((float)$__b['bonus_amount'], 2), '0'), '.');
+                        ?>
+                        <button type="button" onclick="pickDepositOffer(<?= $__min ?>)" class="text-left p-2.5 rounded-xl bg-[#1a0f0a] border border-amber-500/30 hover:border-amber-400 active:scale-95 transition">
+                            <span class="block text-sm font-black text-white font-mono">$<?= rtrim(rtrim(number_format($__min, 2), '0'), '.') ?></span>
+                            <span class="block text-[10px] text-amber-300 font-bold">+<?= $__bl ?> FREE <span class="text-gray-400 font-normal">(≈ ৳<?= round($__min * $effectiveBdtRate) ?>)</span></span>
+                        </button>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
                 <form method="POST" id="depositSubmitForm" onsubmit="return validateDepositLimits()" class="space-y-3 text-xs">
                     <input type="hidden" name="action" value="add_fund">
                     <input type="hidden" id="hiddenMethod" name="method" value="bKash">
@@ -1481,6 +1685,10 @@ $userAllResetKeys = lm_enrich_licenses_reset($pdo, $stmtAllKeys->fetchAll(PDO::F
                         <div class="flex justify-between items-center mb-1">
                             <label id="amountLabel" class="text-[11px] text-gray-400 font-bold">Amount to Pay in BDT (৳)</label>
                             <span id="liveConversionTag" class="text-[10px] font-mono text-emerald-400 font-bold">≈ $0.00 USD</span>
+                        </div>
+                        <div id="depositBonusTag" class="hidden text-[10px] font-mono text-amber-300 font-bold mb-1">
+                        </div>
+                        <div class="hidden">
                         </div>
                         <input type="number" step="any" id="depositAmountInput" name="amount" oninput="calculateDepositConversion()" required placeholder="e.g. 125" class="w-full bg-[#080312] border border-[#251346] text-sm text-white rounded-xl p-3 outline-none focus:border-fuchsia-500 font-mono transition">
                         
@@ -1922,13 +2130,18 @@ public class LicenseApiBot {
                     <?php if (empty($deposits)): ?>
                         <p class="text-xs text-gray-500 text-center py-6">No deposits recorded.</p>
                     <?php else: ?>
-                        <?php foreach($deposits as $d): ?>
-                            <div class="bg-[#080312] p-3 rounded-xl border border-[#251346] flex justify-between items-center text-xs">
-                                <div>
-                                    <span class="font-bold text-white block"><?= $d['method'] ?> • $<?= number_format((float)$d['amount'], 2) ?> USD</span>
-                                    <span class="text-[10px] text-gray-400 font-mono">Trx: <?= $d['trx_id'] ?></span>
+                        <?php foreach($deposits as $d):
+                            [$__tl, $__tc] = km_trx_label((string)($d['type'] ?? 'MANUAL'));
+                            $__amt = (float)$d['amount']; $__neg = $__amt < 0; $__bn = (float)($d['bonus_amount'] ?? 0);
+                        ?>
+                            <div class="bg-[#080312] p-3 rounded-xl border border-[#251346] flex justify-between items-center gap-2 text-xs">
+                                <div class="min-w-0">
+                                    <span class="inline-block px-2 py-0.5 rounded-md text-[9px] font-bold uppercase bg-<?= $__tc ?>-500/15 text-<?= $__tc ?>-300 border border-<?= $__tc ?>-500/30"><?= $__tl ?></span>
+                                    <span class="font-black block mt-1 <?= $__neg ? 'text-rose-400' : 'text-emerald-400' ?>"><?= $__neg ? '−' : '+' ?>$<?= number_format(abs($__amt), 2) ?><?php if ($__bn > 0): ?> <span class="text-amber-300 text-[10px] font-bold">+$<?= number_format($__bn, 2) ?> bonus</span><?php endif; ?></span>
+                                    <span class="text-[10px] text-gray-400 font-mono break-all"><?= htmlspecialchars((string)$d['method']) ?> • <?= htmlspecialchars((string)$d['trx_id']) ?></span>
+                                    <span class="text-[9px] text-gray-500 font-mono block"><?= htmlspecialchars(substr((string)$d['created_at'], 0, 16)) ?><?= !empty($d['note']) ? ' • ' . htmlspecialchars((string)$d['note']) : '' ?></span>
                                 </div>
-                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-lg <?= $d['status'] === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : ($d['status'] === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400') ?>">
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-lg shrink-0 <?= $d['status'] === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : ($d['status'] === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400') ?>">
                                     <?= strtoupper($d['status']) ?>
                                 </span>
                             </div>
@@ -1938,6 +2151,97 @@ public class LicenseApiBot {
             </div>
         </section>
         <?php endif; ?>
+
+        <!-- MY SALES: kon hack / variant / validity koyta login bikri hoyeche -->
+        <section id="page-sales" class="page-section hidden w-full space-y-3">
+            <div class="glass-card rounded-2xl p-4 space-y-3">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-chart-column text-amber-400"></i> My Sales</h3>
+                <?php if (empty($mySales)): ?>
+                    <p class="text-xs text-gray-500 text-center py-6">No sales yet.</p>
+                <?php else:
+                    $__tk = 0; $__tr = 0.0;
+                    foreach ($mySales as $__rows) foreach ($__rows as $__r) { $__tk += (int)$__r['sold']; $__tr += (float)$__r['revenue']; }
+                ?>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-[#080312] border border-[#251346] rounded-xl p-3"><span class="text-[10px] text-gray-400 block uppercase font-mono">Logins Sold</span><strong class="text-lg text-amber-300 font-mono"><?= $__tk ?></strong></div>
+                        <div class="bg-[#080312] border border-[#251346] rounded-xl p-3"><span class="text-[10px] text-gray-400 block uppercase font-mono">Spent</span><strong class="text-lg text-emerald-300 font-mono">$<?= number_format($__tr, 2) ?></strong></div>
+                    </div>
+                    <?php foreach ($mySales as $__pn => $__rows): $__sub = array_sum(array_column($__rows, 'sold')); ?>
+                        <div class="bg-[#080312] border border-[#251346] rounded-xl p-3 space-y-1.5">
+                            <div class="flex justify-between items-center">
+                                <strong class="text-xs text-white"><?= htmlspecialchars($__pn) ?></strong>
+                                <span class="text-[11px] text-amber-300 font-bold font-mono"><?= $__sub ?> sold</span>
+                            </div>
+                            <?php foreach ($__rows as $__r): ?>
+                                <div class="flex justify-between text-[11px] font-mono border-t border-[#251346] pt-1.5">
+                                    <span class="text-gray-300"><?= htmlspecialchars((string)$__r['plan_title']) ?></span>
+                                    <span><b class="text-white"><?= (int)$__r['sold'] ?></b> <span class="text-emerald-400">$<?= number_format((float)$__r['revenue'], 2) ?></span></span>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+        </section>
+
+        <!-- PRICE EDIT: sub-reseller der price set -->
+        <?php if ($isReseller): ?>
+        <section id="page-priceedit" class="page-section hidden w-full space-y-3">
+            <div class="glass-card rounded-2xl p-4 space-y-3">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-tags text-emerald-400"></i> Price Edit</h3>
+                <p class="text-[11px] text-gray-400">Set what your sub-resellers pay. You can only set equal or higher than your own price.</p>
+
+                <div class="space-y-1.5" id="peTargets">
+                    <button type="button" data-t="0" onclick="peSelect(0, this)" class="pe-target w-full text-left px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-2"><i class="fa-solid fa-users text-emerald-400"></i> All my sub-resellers</button>
+                    <?php foreach ($subResellers as $__s): ?>
+                        <button type="button" data-t="<?= (int)$__s['id'] ?>" onclick="peSelect(<?= (int)$__s['id'] ?>, this)" class="pe-target w-full text-left px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-2"><i class="fa-solid fa-user text-purple-400"></i> <?= htmlspecialchars($__s['username']) ?></button>
+                    <?php endforeach; ?>
+                    <?php if (empty($subResellers)): ?><p class="text-[11px] text-gray-500">No sub-resellers yet.</p><?php endif; ?>
+                </div>
+            </div>
+
+            <div class="glass-card rounded-2xl p-4 space-y-3">
+                <div class="flex items-center justify-between gap-2">
+                    <strong id="peTitle" class="text-xs text-white">All my sub-resellers</strong>
+                    <input type="text" id="peSearch" oninput="peRender()" placeholder="Search products…" class="w-1/2 bg-[#080312] border border-[#251346] rounded-xl px-3 py-2 text-[11px] text-white outline-none focus:border-emerald-400">
+                </div>
+                <div class="grid text-[10px] font-bold text-purple-300 uppercase px-1" style="grid-template-columns: 1fr 56px 56px 76px;">
+                    <span>Product</span><span class="text-right">You pay</span><span class="text-right">Subs pay</span><span class="text-right">New</span>
+                </div>
+                <div id="peRows" class="space-y-1 max-h-[55vh] overflow-y-auto"></div>
+                <div class="flex gap-2">
+                    <button type="button" onclick="peClear()" class="px-4 py-3 rounded-xl bg-[#1a1226] border border-[#251346] text-gray-300 text-xs font-bold"><i class="fa-solid fa-eraser mr-1"></i> Clear all</button>
+                    <button type="button" onclick="peSave()" class="flex-1 py-3 rounded-xl btn-magenta-glow text-white text-xs font-black uppercase tracking-wider"><i class="fa-solid fa-floppy-disk mr-1"></i> Save prices</button>
+                </div>
+                <p class="text-[10px] text-gray-500">Empty = default price. "All" applies to every sub-reseller without his own price.</p>
+            </div>
+        </section>
+        <?php endif; ?>
+
+        <!-- MESSAGES: admin er shathe one-to-one -->
+        <section id="page-chat" class="page-section hidden w-full space-y-3">
+            <div class="glass-card rounded-2xl p-4 space-y-3">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-comments text-cyan-400"></i> Messages <span class="text-[10px] text-gray-500 font-normal">with Admin</span></h3>
+                <div id="chatBox" class="h-[52vh] overflow-y-auto space-y-2 bg-[#080312] border border-[#251346] rounded-2xl p-3"></div>
+                <form onsubmit="chatSendMsg(event)" class="flex gap-2">
+                    <input type="text" id="chatInputMsg" maxlength="2000" autocomplete="off" placeholder="Type a message…" class="flex-1 bg-[#080312] border border-[#251346] rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-cyan-400">
+                    <button class="px-4 rounded-xl bg-cyan-500 text-gray-950 font-black text-xs">Send</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ACCOUNT: password change -->
+        <section id="page-account" class="page-section hidden w-full space-y-3">
+            <div class="glass-card rounded-2xl p-4 space-y-3">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2"><i class="fa-solid fa-user-shield text-fuchsia-400"></i> Change Password</h3>
+                <form onsubmit="changePasswordSubmit(event)" class="space-y-3 text-xs">
+                    <input type="password" id="cpCur" required autocomplete="current-password" placeholder="Current password" class="w-full bg-[#080312] border border-[#251346] rounded-xl p-3 text-white outline-none focus:border-fuchsia-400">
+                    <input type="password" id="cpNew" required minlength="6" autocomplete="new-password" placeholder="New password (min 6)" class="w-full bg-[#080312] border border-[#251346] rounded-xl p-3 text-white outline-none focus:border-fuchsia-400">
+                    <input type="password" id="cpRep" required minlength="6" autocomplete="new-password" placeholder="Confirm new password" class="w-full bg-[#080312] border border-[#251346] rounded-xl p-3 text-white outline-none focus:border-fuchsia-400">
+                    <button id="cpBtn" class="w-full py-3.5 btn-magenta-glow text-white font-black rounded-xl uppercase tracking-wider">Update Password</button>
+                </form>
+            </div>
+        </section>
 
     </main>
 
@@ -2755,6 +3059,133 @@ public class LicenseApiBot {
             document.getElementById('backdrop').classList.toggle('hidden');
         }
 
+        // ================= NEW: Price Edit / Chat / Password / Offers =================
+        const _esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        async function dashApi(action, data = {}) {
+            const fd = new FormData(); fd.append('ajax_action', action);
+            for (const k in data) fd.append(k, data[k]);
+            try { const r = await fetch('dashboard.php', { method: 'POST', body: fd }); return await r.json(); }
+            catch (e) { return { status: 'error', message: 'Network error' }; }
+        }
+
+        // ---- Password
+        async function changePasswordSubmit(e) {
+            e.preventDefault();
+            const btn = document.getElementById('cpBtn'); btn.disabled = true;
+            const d = await dashApi('change_password', {
+                current_password: document.getElementById('cpCur').value,
+                new_password: document.getElementById('cpNew').value,
+                confirm_password: document.getElementById('cpRep').value
+            });
+            btn.disabled = false;
+            showToast(d.message || 'Error', d.status === 'success' ? 'success' : 'error');
+            if (d.status === 'success') e.target.reset();
+        }
+
+        // ---- Price Edit
+        let peTarget = 0, peData = [];
+        function peMark() { document.querySelectorAll('.pe-target').forEach(b => {
+            const on = parseInt(b.dataset.t) === peTarget;
+            b.className = 'pe-target w-full text-left px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 ' + (on ? 'bg-emerald-500/15 border-emerald-500/50 text-white' : 'bg-[#080312] border-[#251346] text-gray-300');
+        }); }
+        async function peSelect(t, btn) {
+            peTarget = t; peMark();
+            document.getElementById('peTitle').textContent = btn ? btn.textContent.trim() : 'All my sub-resellers';
+            const d = await dashApi('get_sub_prices', { target: t });
+            if (d.status !== 'success') { showToast(d.message || 'Error', 'error'); return; }
+            peData = d.rows; peRender();
+        }
+        function peRender() {
+            const q = (document.getElementById('peSearch').value || '').toLowerCase();
+            const box = document.getElementById('peRows');
+            const rows = peData.filter(r => (r.name + ' ' + r.plan).toLowerCase().includes(q));
+            box.innerHTML = rows.length ? rows.map(r => '<div class="grid items-center gap-1 bg-[#080312] border border-[#251346] rounded-xl px-2 py-2" style="grid-template-columns: 1fr 56px 56px 76px;">'
+                + '<span class="text-[10px] text-white font-bold leading-tight">' + _esc(r.name) + ' <span class="text-purple-300 font-normal">· ' + _esc(r.plan) + '</span></span>'
+                + '<span class="text-[10px] text-purple-300 text-right font-mono">$' + r.you_pay.toFixed(2) + '</span>'
+                + '<span class="text-[10px] text-emerald-400 text-right font-mono">$' + r.subs_pay.toFixed(2) + '</span>'
+                + '<input type="number" step="0.01" min="' + r.you_pay + '" data-plan="' + r.plan_id + '" data-min="' + r.you_pay + '" value="' + (r.custom !== null ? r.custom : '') + '" placeholder="' + r.subs_pay.toFixed(2) + '" oninput="peInput(this)" class="pe-in w-full bg-[#0f0821] border border-[#251346] rounded-lg px-1.5 py-1.5 text-[11px] text-white font-mono text-right outline-none focus:border-emerald-400"></div>').join('')
+                : '<p class="text-xs text-gray-500 text-center py-4">No products.</p>';
+        }
+        function peInput(el) {
+            const v = parseFloat(el.value), min = parseFloat(el.dataset.min);
+            el.classList.toggle('border-red-500', el.value !== '' && v < min);
+            // edit kora value gulo peData te rakhi (search korle haray na)
+            const row = peData.find(r => r.plan_id == el.dataset.plan); if (row) row.custom = el.value === '' ? null : v;
+        }
+        async function peSave() {
+            const prices = {};
+            for (const r of peData) {
+                if (r.custom !== null && r.custom !== '' && r.custom < r.you_pay) { showToast('Price cannot be lower than your own price for ' + r.name + ' · ' + r.plan, 'error'); return; }
+                prices[r.plan_id] = (r.custom === null || r.custom === '') ? '' : r.custom;
+            }
+            const d = await dashApi('save_sub_prices', { target: peTarget, prices: JSON.stringify(prices) });
+            showToast(d.message || 'Error', d.status === 'success' ? 'success' : 'error');
+            if (d.status === 'success') peSelect(peTarget, document.querySelector('.pe-target[data-t="' + peTarget + '"]'));
+        }
+        async function peClear() {
+            if (!confirm('Clear all custom prices for this selection?')) return;
+            const d = await dashApi('save_sub_prices', { target: peTarget, clear_all: 1 });
+            showToast(d.message || 'Error', d.status === 'success' ? 'success' : 'error');
+            peSelect(peTarget, document.querySelector('.pe-target[data-t="' + peTarget + '"]'));
+        }
+
+        // ---- Chat
+        let chatLastId = 0, chatTimerD = null;
+        async function chatPollMsgs() {
+            const d = await dashApi('chat_fetch', { after_id: chatLastId });
+            if (d.status !== 'success' || !d.rows.length) return;
+            const box = document.getElementById('chatBox');
+            d.rows.forEach(m => {
+                chatLastId = Math.max(chatLastId, parseInt(m.id));
+                const me = m.sender_role === 'user';
+                box.insertAdjacentHTML('beforeend', '<div class="flex ' + (me ? 'justify-end' : 'justify-start') + '"><div class="max-w-[82%] px-3 py-2 rounded-2xl text-xs bangla-text ' + (me ? 'bg-fuchsia-500/20 text-fuchsia-100 border border-fuchsia-500/30' : 'bg-[#130c26] text-gray-200 border border-[#251346]') + '"><div class="whitespace-pre-wrap break-words">' + _esc(m.body) + '</div><div class="text-[9px] text-gray-500 mt-1">' + (me ? 'You' : 'Admin') + ' • ' + _esc(String(m.created_at).slice(5, 16)) + '</div></div></div>');
+            });
+            box.scrollTop = box.scrollHeight;
+            chatUpdateBadge(0);
+        }
+        function chatUpdateBadge(n) { const b = document.getElementById('chatNavBadge'); if (b) { b.textContent = n; b.classList.toggle('hidden', !(n > 0)); } }
+        async function chatSendMsg(e) {
+            e.preventDefault(); const inp = document.getElementById('chatInputMsg'), body = inp.value.trim(); if (!body) return;
+            inp.value = '';
+            const d = await dashApi('chat_send', { body });
+            if (d.status !== 'success') showToast(d.message || 'Error', 'error'); else chatPollMsgs();
+        }
+        async function chatUnreadCheck() { const d = await dashApi('chat_unread'); if (d.status === 'success') chatUpdateBadge(d.unread); }
+        setInterval(() => { const pg = document.getElementById('page-chat'); if (pg && !pg.classList.contains('hidden')) chatPollMsgs(); else chatUnreadCheck(); }, 6000);
+        setTimeout(chatUnreadCheck, 1500);
+
+        // page open hook
+        function onPageShow(id) {
+            if (id === 'chat') { chatPollMsgs(); }
+            if (id === 'priceedit') { peSelect(0, document.querySelector('.pe-target[data-t="0"]')); }
+        }
+
+        // ---- Deposit offers + bonus preview
+        const depositBonusSlabs = <?= json_encode(array_map(fn($b) => ['min' => (float)$b['min_amount'], 'bonus' => (float)$b['bonus_amount'], 'type' => $b['bonus_type']], $bonusSlabs)) ?>;
+        function bonusFor(usd) {
+            let best = null;
+            depositBonusSlabs.forEach(s => { if (usd >= s.min && (!best || s.min > best.min)) best = s; });
+            if (!best) return 0;
+            return best.type === 'percent' ? Math.round(usd * best.bonus) / 100 : best.bonus;
+        }
+        function pickDepositOffer(usd) {
+            const inp = document.getElementById('depositAmountInput');
+            if (selectedCurrency === 'BDT') inp.value = Math.ceil(usd * currentBdtRate);
+            else inp.value = Math.round((usd * currentBdtRate / currentMarketRate) * 100) / 100;
+            calculateDepositConversion();
+            inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        (function () {
+            const orig = calculateDepositConversion;
+            calculateDepositConversion = function () {
+                orig();
+                const v = parseFloat(document.getElementById('depositAmountInput').value) || 0;
+                const usd = selectedCurrency === 'BDT' ? v / currentBdtRate : (v * currentMarketRate) / currentBdtRate;
+                const b = bonusFor(Math.round(usd * 100) / 100), tag = document.getElementById('depositBonusTag');
+                if (tag) { tag.classList.toggle('hidden', !(b > 0)); tag.innerHTML = b > 0 ? '🎁 Offer bonus: +$' + b.toFixed(2) + ' FREE (added after payment is verified)' : ''; }
+            };
+        })();
+
         function goToPage(pageId) {
             const sidebar = document.getElementById('sidebar');
             const backdrop = document.getElementById('backdrop');
@@ -2775,6 +3206,7 @@ public class LicenseApiBot {
                 curNav.className = "nav-item w-full flex items-center space-x-3 px-4 py-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white font-bold transition";
             }
 
+            if (typeof onPageShow === 'function') onPageShow(pageId);
             sessionStorage.setItem('dashboard_active_page', pageId);
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
